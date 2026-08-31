@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Local Code Reader</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="container">
+    <header>
+      <div>
+        <p class="eyebrow">LOCAL / OLLAMA</p>
+        <h1>Local Code Reader</h1>
+        <p class="subtitle">ソースコードを外部へ送らず、1ファイルずつ構造と役割を読む v1。</p>
+      </div>
+      <div id="status" class="status">Ollama確認中…</div>
+    </header>
+
+    <section class="panel">
+      <form id="analyzeForm">
+        <label class="dropzone" for="fileInput">
+          <strong>ソースコードを選択</strong>
+          <span>.py / .cpp / .h / .js / .ts / .java / .cs / .go / .rs / 設定ファイルなど</span>
+          <input id="fileInput" name="file" type="file" required>
+        </label>
+
+        <div class="row">
+          <label class="field">
+            <span>Ollama model</span>
+            <input id="modelInput" name="model" value="{{ default_model }}" list="modelsList">
+            <datalist id="modelsList"></datalist>
+          </label>
+          <button id="analyzeButton" type="submit">解析する</button>
+        </div>
+      </form>
+      <p class="privacy">ソースコードはこのアプリではディスク保存しません。Ollamaも localhost のAPIを使用します。</p>
+    </section>
+
+    <section id="errorBox" class="error hidden"></section>
+    <section id="loadingBox" class="panel hidden">解析中… 静的解析 → Ollama の順で処理しています。</section>
+
+    <section id="resultArea" class="hidden">
+      <div class="result-head">
+        <div>
+          <p class="eyebrow">RESULT</p>
+          <h2 id="fileTitle">解析結果</h2>
+          <p id="fileMeta" class="muted"></p>
+        </div>
+        <button id="downloadButton" class="secondary" type="button">JSON保存</button>
+      </div>
+
+      <div class="grid">
+        <article class="card wide">
+          <h3>このファイルの役割</h3>
+          <p id="purpose"></p>
+          <p id="overview" class="muted-text"></p>
+        </article>
+        <article class="card">
+          <h3>処理フロー</h3>
+          <ol id="mainFlow"></ol>
+        </article>
+        <article class="card">
+          <h3>変更時の注意</h3>
+          <ul id="changeRisks"></ul>
+        </article>
+        <article class="card">
+          <h3>主要な関数</h3>
+          <div id="keyFunctions"></div>
+        </article>
+        <article class="card">
+          <h3>主要なクラス</h3>
+          <div id="keyClasses"></div>
+        </article>
+        <article class="card">
+          <h3>入力</h3>
+          <ul id="inputs"></ul>
+        </article>
+        <article class="card">
+          <h3>出力</h3>
+          <ul id="outputs"></ul>
+        </article>
+        <article class="card">
+          <h3>外部依存</h3>
+          <ul id="dependencies"></ul>
+        </article>
+        <article class="card">
+          <h3>関連ファイル</h3>
+          <ul id="relatedFiles"></ul>
+        </article>
+        <article class="card wide">
+          <h3>このファイルだけでは分からないこと</h3>
+          <ul id="unknowns"></ul>
+        </article>
+      </div>
+
+      <details class="panel details">
+        <summary>静的解析結果を見る</summary>
+        <pre id="staticJson"></pre>
+      </details>
+    </section>
+  </main>
+
+<script>
+let lastResult = null;
+
+const byId = (id) => document.getElementById(id);
+
+function fillList(id, values) {
+  const el = byId(id);
+  el.innerHTML = "";
+  const items = values && values.length ? values : ["特記事項なし"];
+  items.forEach(v => {
+    const li = document.createElement("li");
+    li.textContent = v;
+    el.appendChild(li);
+  });
+}
+
+function fillNamed(id, values) {
+  const el = byId(id);
+  el.innerHTML = "";
+  if (!values || !values.length) {
+    el.textContent = "特記事項なし";
+    return;
+  }
+  values.forEach(v => {
+    const p = document.createElement("p");
+    const strong = document.createElement("strong");
+    strong.textContent = v.name;
+    p.appendChild(strong);
+    p.appendChild(document.createTextNode(`: ${v.role}`));
+    el.appendChild(p);
+  });
+}
+
+async function loadStatus() {
+  try {
+    const res = await fetch("/api/status");
+    const data = await res.json();
+    const status = byId("status");
+    if (data.ollama_connected) {
+      status.textContent = `Ollama接続済み / ${data.models.length} model`;
+      status.classList.add("ok");
+      const list = byId("modelsList");
+      data.models.forEach(name => {
+        const option = document.createElement("option");
+        option.value = name;
+        list.appendChild(option);
+      });
+    } else {
+      status.textContent = "Ollama未接続";
+      status.classList.add("ng");
+    }
+  } catch {
+    byId("status").textContent = "状態確認失敗";
+  }
+}
+
+byId("analyzeForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  byId("errorBox").classList.add("hidden");
+  byId("resultArea").classList.add("hidden");
+  byId("loadingBox").classList.remove("hidden");
+  byId("analyzeButton").disabled = true;
+
+  try {
+    const file = byId("fileInput").files[0];
+    if (!file) throw new Error("ファイルを選択してください");
+    const params = new URLSearchParams({
+      filename: file.name,
+      model: byId("modelInput").value.trim()
+    });
+    const res = await fetch(`/api/analyze?${params.toString()}`, {
+      method: "POST",
+      headers: {"Content-Type": "application/octet-stream"},
+      body: file
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "解析に失敗しました");
+
+    lastResult = data;
+    const a = data.analysis;
+    byId("fileTitle").textContent = data.file.name;
+    byId("fileMeta").textContent = `${data.file.language} / ${data.file.line_count} lines / model: ${data.model}`;
+    byId("purpose").textContent = a.purpose;
+    byId("overview").textContent = a.overview;
+    fillList("mainFlow", a.main_flow);
+    fillList("changeRisks", a.change_risks);
+    fillNamed("keyFunctions", a.key_functions);
+    fillNamed("keyClasses", a.key_classes);
+    fillList("inputs", a.inputs);
+    fillList("outputs", a.outputs);
+    fillList("dependencies", a.external_dependencies);
+    fillList("relatedFiles", a.related_files);
+    fillList("unknowns", a.unknowns);
+    byId("staticJson").textContent = JSON.stringify(data.static_analysis, null, 2);
+    byId("resultArea").classList.remove("hidden");
+  } catch (error) {
+    byId("errorBox").textContent = error.message;
+    byId("errorBox").classList.remove("hidden");
+  } finally {
+    byId("loadingBox").classList.add("hidden");
+    byId("analyzeButton").disabled = false;
+  }
+});
+
+byId("downloadButton").addEventListener("click", () => {
+  if (!lastResult) return;
+  const blob = new Blob([JSON.stringify(lastResult, null, 2)], {type: "application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${lastResult.file.name}.analysis.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+loadStatus();
+</script>
+</body>
+</html>
