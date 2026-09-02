@@ -12,7 +12,7 @@
       <div>
         <p class="eyebrow">LOCAL / OLLAMA</p>
         <h1>Local Code Reader</h1>
-        <p class="subtitle">ソースコードを外部へ送らず、静的解析の事実とLLMの解釈を分けて読む v1.1。</p>
+        <p class="subtitle">ソースコードを外部へ送らず、静的解析とLLM解釈に加えて追加質問までできる v1.2。</p>
       </div>
       <div id="status" class="status">Ollama確認中…</div>
     </header>
@@ -123,6 +123,38 @@
         </article>
       </div>
 
+      <section class="panel qa-panel">
+        <div class="qa-head">
+          <div>
+            <p class="eyebrow">ASK THIS FILE</p>
+            <h3>このコードについて追加質問</h3>
+            <p class="muted qa-description">解析済みの同じファイルをlocalhostへ再送し、そのコードを根拠にOllamaが回答します。サーバー側には会話やソースを保存しません。</p>
+          </div>
+          <button id="clearChatButton" class="secondary compact" type="button">会話をクリア</button>
+        </div>
+
+        <div class="quick-questions" aria-label="質問例">
+          <button class="quick-question" type="button" data-question="このファイルの処理の入口はどこですか？">処理の入口は？</button>
+          <button class="quick-question" type="button" data-question="変更したときに影響が大きそうな箇所を、根拠となる関数名や行番号と一緒に教えてください。">変更影響は？</button>
+          <button class="quick-question" type="button" data-question="このファイルを初めて読む人向けに、読む順番を教えてください。">読む順番は？</button>
+        </div>
+
+        <div id="chatMessages" class="chat-messages">
+          <div class="chat-empty">解析結果を見て気になったところを、そのまま質問できます。</div>
+        </div>
+
+        <form id="askForm" class="ask-form">
+          <label class="field" for="questionInput">
+            <span>質問</span>
+            <textarea id="questionInput" rows="3" maxlength="3000" placeholder="例: analyze() は具体的に何をしていますか？"></textarea>
+          </label>
+          <div class="ask-actions">
+            <span id="askStatus" class="muted"></span>
+            <button id="askButton" type="submit">質問する</button>
+          </div>
+        </form>
+      </section>
+
       <details class="panel details">
         <summary>静的解析JSONを見る</summary>
         <pre id="staticJson"></pre>
@@ -132,6 +164,8 @@
 
 <script>
 let lastResult = null;
+let lastFile = null;
+let chatHistory = [];
 
 const byId = (id) => document.getElementById(id);
 
@@ -143,7 +177,6 @@ function fillList(id, values, {stripLeadingNumber = false} = {}) {
     const li = document.createElement("li");
     let text = String(value);
     if (stripLeadingNumber) {
-      // LLMが番号を付けても <ol> 側の番号と二重にならないよう除去する。
       text = text.replace(/^\s*(?:\d+[.．)、:]|[①-⑳]|[（(]\d+[）)])\s*/, "");
     }
     li.textContent = text;
@@ -277,6 +310,49 @@ function renderBasicFacts(data) {
   });
 }
 
+function resetChat() {
+  chatHistory = [];
+  if (lastResult) lastResult.qa_history = [];
+  const messages = byId("chatMessages");
+  messages.innerHTML = '<div class="chat-empty">解析結果を見て気になったところを、そのまま質問できます。</div>';
+  byId("askStatus").textContent = "";
+}
+
+function appendChatMessage(role, content, model = "") {
+  const messages = byId("chatMessages");
+  const empty = messages.querySelector(".chat-empty");
+  if (empty) empty.remove();
+
+  const item = document.createElement("div");
+  item.className = `chat-message ${role}`;
+
+  const label = document.createElement("div");
+  label.className = "chat-label";
+  label.textContent = role === "user" ? "YOU" : (model ? `OLLAMA / ${model}` : "OLLAMA");
+
+  const body = document.createElement("div");
+  body.className = "chat-body";
+  body.textContent = content;
+
+  item.append(label, body);
+  messages.appendChild(item);
+  item.scrollIntoView({behavior: "smooth", block: "nearest"});
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      const comma = result.indexOf(",");
+      if (comma < 0) return reject(new Error("ファイルを質問用データへ変換できませんでした"));
+      resolve(result.slice(comma + 1));
+    };
+    reader.onerror = () => reject(new Error("ファイルを読み込めませんでした"));
+    reader.readAsDataURL(file);
+  });
+}
+
 async function loadStatus() {
   try {
     const res = await fetch("/api/status");
@@ -324,6 +400,10 @@ byId("analyzeForm").addEventListener("submit", async (event) => {
     if (!res.ok) throw new Error(data.detail || "解析に失敗しました");
 
     lastResult = data;
+    lastResult.qa_history = [];
+    lastFile = file;
+    resetChat();
+
     const a = data.analysis;
     const s = data.static_analysis;
     byId("fileTitle").textContent = data.file.name;
@@ -354,6 +434,70 @@ byId("analyzeForm").addEventListener("submit", async (event) => {
     byId("loadingBox").classList.add("hidden");
     byId("analyzeButton").disabled = false;
   }
+});
+
+byId("askForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const question = byId("questionInput").value.trim();
+  if (!question) return;
+  if (!lastFile || !lastResult) {
+    byId("askStatus").textContent = "先にファイルを解析してください。";
+    return;
+  }
+
+  byId("askButton").disabled = true;
+  byId("questionInput").disabled = true;
+  byId("askStatus").textContent = "Ollamaがコードを確認中…";
+
+  const historyForRequest = chatHistory.slice(-8);
+  appendChatMessage("user", question);
+  byId("questionInput").value = "";
+
+  try {
+    const sourceBase64 = await fileToBase64(lastFile);
+    const res = await fetch("/api/ask", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        filename: lastResult.file.name,
+        model: byId("modelInput").value.trim(),
+        question,
+        source_base64: sourceBase64,
+        history: historyForRequest
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "質問への回答に失敗しました");
+
+    appendChatMessage("assistant", data.answer, data.model);
+    chatHistory.push({role: "user", content: question});
+    chatHistory.push({role: "assistant", content: data.answer});
+    chatHistory = chatHistory.slice(-8);
+
+    lastResult.qa_history.push({
+      question,
+      answer: data.answer,
+      model: data.model,
+      metrics: data.metrics
+    });
+    byId("askStatus").textContent = "";
+  } catch (error) {
+    appendChatMessage("assistant", `エラー: ${error.message}`);
+    byId("askStatus").textContent = "回答に失敗しました。";
+  } finally {
+    byId("askButton").disabled = false;
+    byId("questionInput").disabled = false;
+    byId("questionInput").focus();
+  }
+});
+
+byId("clearChatButton").addEventListener("click", resetChat);
+
+document.querySelectorAll(".quick-question").forEach(button => {
+  button.addEventListener("click", () => {
+    byId("questionInput").value = button.dataset.question || "";
+    byId("questionInput").focus();
+  });
 });
 
 byId("downloadButton").addEventListener("click", () => {
