@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import base64
 import binascii
-from pathlib import Path
-from typing import Literal
+from pathlib import Path, PurePosixPath
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
@@ -14,16 +14,30 @@ from pydantic import BaseModel, Field
 from .analyzer import analyze_source
 from .config import (
     ALLOWED_EXTENSIONS,
+    ALLOWED_FILENAMES,
+    PROJECT_EXCLUDED_FILENAMES,
+    PROJECT_STRUCTURE_ONLY_FILENAMES,
     MAX_CHAT_HISTORY_MESSAGES,
     MAX_FILE_BYTES,
+    MAX_PROJECT_FILES,
     MAX_QUESTION_CHARS,
     OLLAMA_MODEL,
 )
-from .ollama_client import analyze_with_ollama, ask_with_ollama, get_ollama_models
+from .ollama_client import (
+    analyze_project_with_ollama,
+    analyze_with_ollama,
+    ask_with_ollama,
+    get_ollama_models,
+)
+from .project_analyzer import (
+    build_project_index,
+    build_structure_only_analysis,
+    classify_project_content,
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 
-app = FastAPI(title="Local Code Reader", version="0.1.2")
+app = FastAPI(title="Local Code Reader", version="0.2.1")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
@@ -41,6 +55,12 @@ class AskRequest(BaseModel):
     history: list[ChatTurn] = Field(default_factory=list, max_length=MAX_CHAT_HISTORY_MESSAGES)
 
 
+class ProjectSummaryRequest(BaseModel):
+    project_name: str = Field(min_length=1, max_length=255)
+    model: str = Field(default="", max_length=200)
+    files: list[dict[str, Any]] = Field(min_length=1, max_length=MAX_PROJECT_FILES)
+
+
 def _decode_source(content: bytes) -> str:
     for encoding in ("utf-8", "utf-8-sig", "cp932", "shift_jis"):
         try:
@@ -50,87 +70,178 @@ def _decode_source(content: bytes) -> str:
     raise HTTPException(status_code=400, detail="文字コードを判定できませんでした。UTF-8 / CP932 / Shift-JISを試しました。")
 
 
+def _is_allowed_file(filename: str) -> bool:
+    name = Path(filename).name
+    return name in ALLOWED_FILENAMES or Path(name).suffix.lower() in ALLOWED_EXTENSIONS
+
+
 def _validate_filename(filename: str) -> str:
     safe_filename = Path(filename).name
-    suffix = Path(safe_filename).suffix.lower()
-    if suffix not in ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"未対応の拡張子です: {suffix or '(なし)'}",
-        )
+    if not _is_allowed_file(safe_filename):
+        suffix = Path(safe_filename).suffix.lower()
+        raise HTTPException(status_code=400, detail=f"未対応のファイルです: {safe_filename} ({suffix or '拡張子なし'})")
     return safe_filename
+
+
+def _validate_project_path(path: str) -> str:
+    normalized = path.replace("\\", "/").strip("/")
+    p = PurePosixPath(normalized)
+    if not normalized or p.is_absolute() or ".." in p.parts:
+        raise HTTPException(status_code=400, detail="不正なプロジェクト内パスです。")
+    if len(normalized) > 600:
+        raise HTTPException(status_code=400, detail="プロジェクト内パスが長すぎます。")
+    _validate_filename(p.name)
+    return normalized
 
 
 def _validate_content(content: bytes) -> None:
     if len(content) > MAX_FILE_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"ファイルが大きすぎます。v1の上限は {MAX_FILE_BYTES // 1024} KiB です。",
-        )
+        raise HTTPException(status_code=413, detail=f"ファイルが大きすぎます。1ファイル上限は {MAX_FILE_BYTES // 1024} KiB です。")
     if not content:
         raise HTTPException(status_code=400, detail="ファイルが空です。")
 
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
-    return templates.TemplateResponse(
-        request=request,
-        name="index.html",
-        context={"default_model": OLLAMA_MODEL},
-    )
+    return templates.TemplateResponse(request=request, name="index.html", context={"default_model": OLLAMA_MODEL})
 
 
 @app.get("/api/status")
 def status():
     models = get_ollama_models()
-    return {"ollama_connected": bool(models), "models": models, "default_model": OLLAMA_MODEL}
+    return {
+        "ollama_connected": bool(models),
+        "models": models,
+        "default_model": OLLAMA_MODEL,
+        "limits": {"max_file_bytes": MAX_FILE_BYTES, "max_project_files": MAX_PROJECT_FILES},
+        "allowed_extensions": sorted(ALLOWED_EXTENSIONS),
+        "allowed_filenames": sorted(ALLOWED_FILENAMES),
+        "project_filter": {
+            "structure_only_filenames": sorted(PROJECT_STRUCTURE_ONLY_FILENAMES),
+            "excluded_filenames": sorted(PROJECT_EXCLUDED_FILENAMES),
+        },
+    }
 
 
-@app.post("/api/analyze")
-async def analyze(
-    request: Request,
-    filename: str = Query(..., min_length=1, max_length=255),
-    model: str = Query(default="", max_length=200),
-):
-    safe_filename = _validate_filename(filename)
-
-    content_length = request.headers.get("content-length")
-    if content_length:
-        try:
-            if int(content_length) > MAX_FILE_BYTES:
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"ファイルが大きすぎます。v1の上限は {MAX_FILE_BYTES // 1024} KiB です。",
-                )
-        except ValueError:
-            pass
-
-    # multipart/UploadFileを使わず、生のリクエスト本文をメモリ上で読む。
-    content = await request.body()
+async def _analyze_bytes(filename: str, content: bytes, model: str | None, *, project_path: str | None = None):
     _validate_content(content)
-
     source = _decode_source(content)
-    static_analysis = analyze_source(safe_filename, source)
-
+    analysis_name = project_path or filename
+    static_analysis = analyze_source(analysis_name, source)
     try:
         llm_result = analyze_with_ollama(
-            filename=safe_filename,
+            filename=analysis_name,
             static_analysis=static_analysis,
             source=source,
-            model=model.strip() or None,
+            model=model,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    # ソースコード本体はレスポンスにもディスクにも保存しない。
+    file_info = {
+        "name": filename,
+        "language": static_analysis["language"],
+        "line_count": static_analysis["line_count"],
+        "char_count": static_analysis["char_count"],
+    }
+    if project_path:
+        file_info["path"] = project_path
+    return {"file": file_info, "static_analysis": static_analysis, **llm_result}
+
+
+@app.post("/api/analyze")
+async def analyze(request: Request, filename: str = Query(..., min_length=1, max_length=255), model: str = Query(default="", max_length=200)):
+    safe_filename = _validate_filename(filename)
+    content = await request.body()
+    return await _analyze_bytes(safe_filename, content, model.strip() or None)
+
+
+@app.post("/api/project/analyze-file")
+async def analyze_project_file(request: Request, path: str = Query(..., min_length=1, max_length=600), model: str = Query(default="", max_length=200)):
+    safe_path = _validate_project_path(path)
+    content = await request.body()
+    if len(content) > MAX_FILE_BYTES:
+        raise HTTPException(status_code=413, detail=f"ファイルが大きすぎます。1ファイル上限は {MAX_FILE_BYTES // 1024} KiB です。")
+
+    filename = PurePosixPath(safe_path).name
+    # プロジェクト解析では空ファイルをエラーにせず、明示的なskip結果として返す。
+    if not content:
+        return {
+            "file": {"name": filename, "path": safe_path, "language": "Unknown", "line_count": 0, "char_count": 0},
+            "processing": {"mode": "skip", "reason": "空ファイル"},
+        }
+
+    source = _decode_source(content)
+    decision = classify_project_content(safe_path, source)
+    if decision["mode"] == "skip":
+        return {
+            "file": {
+                "name": filename,
+                "path": safe_path,
+                "language": analyze_source(safe_path, source)["language"],
+                "line_count": source.count("\n") + (1 if source else 0),
+                "char_count": len(source),
+            },
+            "processing": decision,
+        }
+
+    static_analysis = analyze_source(safe_path, source)
+    file_info = {
+        "name": filename,
+        "path": safe_path,
+        "language": static_analysis["language"],
+        "line_count": static_analysis["line_count"],
+        "char_count": static_analysis["char_count"],
+    }
+
+    if decision["mode"] == "structure":
+        return {
+            "file": file_info,
+            "processing": decision,
+            "static_analysis": static_analysis,
+            "analysis": build_structure_only_analysis(safe_path, source, static_analysis),
+            "model": None,
+            "metrics": {"total_duration_ns": 0, "prompt_eval_count": 0, "eval_count": 0},
+        }
+
+    result = await _analyze_bytes(filename, content, model.strip() or None, project_path=safe_path)
+    result["processing"] = decision
+    return result
+
+
+@app.post("/api/project/summarize")
+def summarize_project(payload: ProjectSummaryRequest):
+    if len(payload.files) > MAX_PROJECT_FILES:
+        raise HTTPException(status_code=400, detail=f"v2.1では最大 {MAX_PROJECT_FILES} ファイルまでです。")
+
+    compact_files: list[dict[str, Any]] = []
+    for item in payload.files:
+        file_info = item.get("file") or {}
+        if "path" not in file_info:
+            raise HTTPException(status_code=400, detail="プロジェクト解析結果にpathがありません。")
+        _validate_project_path(str(file_info["path"]))
+        # クライアントからソースコードが混入してもプロジェクト要約には渡さない。
+        compact_files.append({
+            "file": file_info,
+            "processing": item.get("processing") or {"mode": "llm", "reason": ""},
+            "static_analysis": item.get("static_analysis") or {},
+            "analysis": item.get("analysis") or {},
+        })
+
+    project_index = build_project_index(compact_files)
+    try:
+        llm_result = analyze_project_with_ollama(
+            project_name=payload.project_name.strip(),
+            files=compact_files,
+            project_index=project_index,
+            model=payload.model.strip() or None,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
     return {
-        "file": {
-            "name": safe_filename,
-            "language": static_analysis["language"],
-            "line_count": static_analysis["line_count"],
-            "char_count": static_analysis["char_count"],
-        },
-        "static_analysis": static_analysis,
+        "project": {"name": payload.project_name.strip(), "file_count": len(compact_files)},
+        "project_index": project_index,
         **llm_result,
     }
 
@@ -138,7 +249,6 @@ async def analyze(
 @app.post("/api/ask")
 def ask(payload: AskRequest):
     safe_filename = _validate_filename(payload.filename)
-
     try:
         content = base64.b64decode(payload.source_base64, validate=True)
     except (binascii.Error, ValueError) as exc:
@@ -147,9 +257,7 @@ def ask(payload: AskRequest):
     _validate_content(content)
     source = _decode_source(content)
     static_analysis = analyze_source(safe_filename, source)
-
     history = [turn.model_dump() for turn in payload.history[-MAX_CHAT_HISTORY_MESSAGES:]]
-
     try:
         return ask_with_ollama(
             filename=safe_filename,

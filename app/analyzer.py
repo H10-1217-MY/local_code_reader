@@ -15,6 +15,7 @@ LANGUAGE_BY_SUFFIX = {
     ".json": "JSON", ".yaml": "YAML", ".yml": "YAML", ".toml": "TOML",
     ".ini": "INI", ".cfg": "Config", ".sh": "Shell", ".bash": "Shell",
     ".ps1": "PowerShell", ".sql": "SQL", ".md": "Markdown", ".txt": "Text",
+    ".html": "HTML", ".htm": "HTML", ".css": "CSS", ".scss": "SCSS", ".xml": "XML",
 }
 
 
@@ -61,7 +62,7 @@ def _python_analysis(source: str) -> dict[str, Any]:
             imports.extend(alias.name for alias in node.names)
 
         def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-            module = node.module or ""
+            module = ("." * node.level) + (node.module or "")
             names = ", ".join(alias.name for alias in node.names)
             imports.append(f"from {module} import {names}")
 
@@ -165,7 +166,7 @@ def _lightweight_analysis(source: str, language: str) -> dict[str, Any]:
         "functions": functions[:200],
         "classes": classes[:100],
         "syntax_error": None,
-        "note": f"{language} はv1.1では軽量なパターン解析です。意味解析はOllamaが補完します。",
+        "note": f"{language} はv2.0では軽量なパターン解析です。意味解析はOllamaが補完します。",
     }
 
 

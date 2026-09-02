@@ -2,516 +2,144 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Local Code Reader</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Local Code Reader v2.1</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <main class="container">
-    <header>
-      <div>
-        <p class="eyebrow">LOCAL / OLLAMA</p>
-        <h1>Local Code Reader</h1>
-        <p class="subtitle">ソースコードを外部へ送らず、静的解析とLLM解釈に加えて追加質問までできる v1.2。</p>
-      </div>
-      <div id="status" class="status">Ollama確認中…</div>
-    </header>
+<main class="container">
+  <header>
+    <div>
+      <p class="eyebrow">LOCAL / OLLAMA</p>
+      <h1>Local Code Reader</h1>
+      <p class="subtitle">1ファイル読解に加えて、プロジェクトフォルダ全体の地図を作る v2.1。空・生成物・依存メタデータを賢く振り分けます。</p>
+    </div>
+    <div id="status" class="status">Ollama確認中…</div>
+  </header>
 
-    <section class="panel">
+  <section class="panel control-panel">
+    <div class="mode-tabs" role="tablist">
+      <button id="singleTab" class="mode-tab active" type="button">1ファイル解析</button>
+      <button id="projectTab" class="mode-tab" type="button">プロジェクト解析</button>
+    </div>
+
+    <label class="field model-field">
+      <span>Ollama model</span>
+      <input id="modelInput" value="{{ default_model }}" list="modelsList">
+      <datalist id="modelsList"></datalist>
+    </label>
+
+    <div id="singleMode">
       <form id="analyzeForm">
         <label class="dropzone" for="fileInput">
-          <strong>ソースコードを選択</strong>
+          <strong>ソースコードを1ファイル選択</strong>
           <span>.py / .cpp / .h / .js / .ts / .java / .cs / .go / .rs / 設定ファイルなど</span>
-          <input id="fileInput" name="file" type="file" required>
+          <input id="fileInput" type="file" required>
         </label>
-
-        <div class="row">
-          <label class="field">
-            <span>Ollama model</span>
-            <input id="modelInput" name="model" value="{{ default_model }}" list="modelsList">
-            <datalist id="modelsList"></datalist>
-          </label>
-          <button id="analyzeButton" type="submit">解析する</button>
-        </div>
+        <div class="action-row"><button id="analyzeButton" type="submit">解析する</button></div>
       </form>
-      <p class="privacy">ソースコードはこのアプリではディスク保存しません。Ollamaも localhost のAPIを使用します。</p>
+    </div>
+
+    <div id="projectMode" class="hidden">
+      <form id="projectForm">
+        <label class="dropzone" for="folderInput">
+          <strong>プロジェクトフォルダを選択</strong>
+          <span>コード・設定・README等を抽出し、LLM解析 / 構造のみ / スキップ / 除外へ振り分けます。</span>
+          <input id="folderInput" type="file" webkitdirectory directory multiple required>
+        </label>
+        <div id="folderPreview" class="folder-preview muted">フォルダ未選択</div>
+        <div class="action-row"><button id="projectAnalyzeButton" type="submit">プロジェクトを解析</button></div>
+      </form>
+      <p class="privacy">.git / .venv / node_modules / build / dist / __pycache__、空ファイル、生成物などを自動整理します。依存定義・lock・ignore系は原則LLMを使わず構造だけ保持します。v2.1は要約対象ファイル数に上限があります。</p>
+    </div>
+
+    <p class="privacy">ソースコードはアプリ側のディスクへ保存しません。通信先は localhost のFastAPIとOllamaです。</p>
+  </section>
+
+  <section id="errorBox" class="error hidden"></section>
+  <section id="loadingBox" class="panel hidden"></section>
+
+  <section id="singleResultArea" class="hidden">
+    <div class="result-head">
+      <div><p class="eyebrow">FILE RESULT</p><h2 id="fileTitle">解析結果</h2><p id="fileMeta" class="muted"></p></div>
+      <button id="downloadButton" class="secondary" type="button">JSON保存</button>
+    </div>
+
+    <div class="section-label"><span class="badge fact">静的解析 / 確認できた事実</span><span>コード構造から取得した情報です。</span></div>
+    <div class="grid fact-grid">
+      <article class="card"><h3>基本情報</h3><dl id="basicFacts" class="fact-list"></dl></article>
+      <article class="card"><h3>import / include</h3><ul id="staticImports"></ul></article>
+      <article class="card wide"><h3>関数・メソッド</h3><div id="staticFunctions" class="symbol-list"></div></article>
+      <article class="card wide"><h3>クラス・構造体</h3><div id="staticClasses" class="symbol-list"></div></article>
+    </div>
+
+    <div class="section-label interpretation-label"><span class="badge interpretation">Ollama / LLMによる解釈</span><span>役割や処理意図の説明です。</span></div>
+    <div class="grid">
+      <article class="card wide"><h3>このファイルの役割</h3><p id="purpose"></p><p id="overview" class="muted-text"></p></article>
+      <article class="card"><h3>処理フロー</h3><ol id="mainFlow"></ol></article>
+      <article class="card"><h3>変更時の注意</h3><ul id="changeRisks"></ul></article>
+      <article class="card wide"><h3>主要な関数・メソッド</h3><div id="keyFunctions" class="symbol-list"></div></article>
+      <article class="card wide"><h3>主要なクラス</h3><div id="keyClasses" class="symbol-list"></div></article>
+      <article class="card"><h3>入力</h3><ul id="inputs"></ul></article>
+      <article class="card"><h3>出力</h3><ul id="outputs"></ul></article>
+      <article class="card"><h3>外部依存</h3><ul id="dependencies"></ul></article>
+      <article class="card"><h3>関連ファイル</h3><ul id="relatedFiles"></ul></article>
+      <article class="card wide unknown-card"><h3>このファイルだけでは分からないこと</h3><ul id="unknowns"></ul></article>
+    </div>
+
+    <section class="panel qa-panel">
+      <div class="qa-head">
+        <div><p class="eyebrow">ASK THIS FILE</p><h3>このコードについて追加質問</h3><p class="muted qa-description">同じファイルをlocalhostへ再送し、コードを根拠に回答します。</p></div>
+        <button id="clearChatButton" class="secondary compact" type="button">会話をクリア</button>
+      </div>
+      <div class="quick-questions">
+        <button class="quick-question" type="button" data-question="このファイルの処理の入口はどこですか？">処理の入口は？</button>
+        <button class="quick-question" type="button" data-question="変更したときに影響が大きそうな箇所を、根拠となる関数名や行番号と一緒に教えてください。">変更影響は？</button>
+        <button class="quick-question" type="button" data-question="このファイルを初めて読む人向けに、読む順番を教えてください。">読む順番は？</button>
+      </div>
+      <div id="chatMessages" class="chat-messages"><div class="chat-empty">解析結果を見て気になったところを、そのまま質問できます。</div></div>
+      <form id="askForm" class="ask-form">
+        <label class="field"><span>質問</span><textarea id="questionInput" rows="3" maxlength="3000" placeholder="例: analyze() は具体的に何をしていますか？"></textarea></label>
+        <div class="ask-actions"><span id="askStatus" class="muted"></span><button id="askButton" type="submit">質問する</button></div>
+      </form>
     </section>
+    <details class="panel details"><summary>静的解析JSONを見る</summary><pre id="staticJson"></pre></details>
+  </section>
 
-    <section id="errorBox" class="error hidden"></section>
-    <section id="loadingBox" class="panel hidden">解析中… 静的解析 → Ollama の順で処理しています。</section>
+  <section id="projectResultArea" class="hidden">
+    <div class="result-head">
+      <div><p class="eyebrow">PROJECT RESULT</p><h2 id="projectTitle">プロジェクト解析</h2><p id="projectMeta" class="muted"></p></div>
+      <button id="projectDownloadButton" class="secondary" type="button">JSON保存</button>
+    </div>
 
-    <section id="resultArea" class="hidden">
-      <div class="result-head">
-        <div>
-          <p class="eyebrow">RESULT</p>
-          <h2 id="fileTitle">解析結果</h2>
-          <p id="fileMeta" class="muted"></p>
-        </div>
-        <button id="downloadButton" class="secondary" type="button">JSON保存</button>
-      </div>
+    <div class="section-label"><span class="badge fact">プロジェクト静的情報</span><span>ファイル数・言語・import/includeの照合結果です。</span></div>
+    <div class="grid">
+      <article class="card"><h3>規模</h3><dl id="projectFacts" class="fact-list"></dl></article>
+      <article class="card"><h3>言語</h3><ul id="projectLanguages"></ul></article>
+      <article class="card wide"><h3>ローカル依存関係</h3><div id="dependencyEdges" class="dependency-list"></div><p class="muted mini" id="dependencyNote"></p></article>
+      <article class="card wide"><h3>スキップ・除外したファイル</h3><ul id="projectSkippedFiles" class="ignored-files"></ul></article>
+    </div>
 
-      <div class="section-label">
-        <span class="badge fact">静的解析 / 確認できた事実</span>
-        <span>ここはLLMの推測ではなく、コード構造から取得した情報です。</span>
-      </div>
+    <div class="section-label interpretation-label"><span class="badge interpretation">Ollama / プロジェクト解釈</span><span>個別ファイルの解析結果を集約して全体像を説明します。</span></div>
+    <div class="grid">
+      <article class="card wide"><h3>このプロジェクトは何か</h3><p id="projectPurpose"></p><p id="projectOverview" class="muted-text"></p></article>
+      <article class="card"><h3>処理・データの流れ</h3><ol id="architectureFlow"></ol></article>
+      <article class="card"><h3>入口になりそうなファイル</h3><div id="entryPoints" class="symbol-list"></div></article>
+      <article class="card wide"><h3>主要コンポーネント</h3><div id="projectComponents" class="project-files"></div></article>
+      <article class="card"><h3>最初に読む順番</h3><div id="readFirst" class="symbol-list"></div></article>
+      <article class="card"><h3>設定・データ・資料</h3><ul id="configDataFiles"></ul></article>
+      <article class="card"><h3>外部依存</h3><ul id="projectDependencies"></ul></article>
+      <article class="card"><h3>変更時の注意</h3><ul id="projectRisks"></ul></article>
+      <article class="card wide unknown-card"><h3>まだ分からないこと</h3><ul id="projectUnknowns"></ul></article>
+    </div>
 
-      <div class="grid fact-grid">
-        <article class="card">
-          <h3>基本情報</h3>
-          <dl id="basicFacts" class="fact-list"></dl>
-        </article>
-        <article class="card">
-          <h3>import / include</h3>
-          <ul id="staticImports"></ul>
-        </article>
-        <article class="card wide">
-          <h3>関数・メソッド</h3>
-          <div id="staticFunctions" class="symbol-list"></div>
-        </article>
-        <article class="card wide">
-          <h3>クラス・構造体</h3>
-          <div id="staticClasses" class="symbol-list"></div>
-        </article>
-      </div>
-
-      <div class="section-label interpretation-label">
-        <span class="badge interpretation">Ollama / LLMによる解釈</span>
-        <span>役割や処理意図の説明です。判断できない点は下部の「不明点」に分離します。</span>
-      </div>
-
-      <div class="grid">
-        <article class="card wide">
-          <h3>このファイルの役割</h3>
-          <p id="purpose"></p>
-          <p id="overview" class="muted-text"></p>
-        </article>
-        <article class="card">
-          <h3>処理フロー</h3>
-          <ol id="mainFlow"></ol>
-        </article>
-        <article class="card">
-          <h3>変更時の注意</h3>
-          <ul id="changeRisks"></ul>
-        </article>
-        <article class="card wide">
-          <h3>主要な関数・メソッド</h3>
-          <div id="keyFunctions" class="symbol-list"></div>
-        </article>
-        <article class="card wide">
-          <h3>主要なクラス</h3>
-          <div id="keyClasses" class="symbol-list"></div>
-        </article>
-        <article class="card">
-          <h3>入力</h3>
-          <ul id="inputs"></ul>
-        </article>
-        <article class="card">
-          <h3>出力</h3>
-          <ul id="outputs"></ul>
-        </article>
-        <article class="card">
-          <h3>外部依存</h3>
-          <ul id="dependencies"></ul>
-        </article>
-        <article class="card">
-          <h3>関連ファイル</h3>
-          <ul id="relatedFiles"></ul>
-        </article>
-        <article class="card wide unknown-card">
-          <h3>このファイルだけでは分からないこと</h3>
-          <ul id="unknowns"></ul>
-        </article>
-      </div>
-
-      <section class="panel qa-panel">
-        <div class="qa-head">
-          <div>
-            <p class="eyebrow">ASK THIS FILE</p>
-            <h3>このコードについて追加質問</h3>
-            <p class="muted qa-description">解析済みの同じファイルをlocalhostへ再送し、そのコードを根拠にOllamaが回答します。サーバー側には会話やソースを保存しません。</p>
-          </div>
-          <button id="clearChatButton" class="secondary compact" type="button">会話をクリア</button>
-        </div>
-
-        <div class="quick-questions" aria-label="質問例">
-          <button class="quick-question" type="button" data-question="このファイルの処理の入口はどこですか？">処理の入口は？</button>
-          <button class="quick-question" type="button" data-question="変更したときに影響が大きそうな箇所を、根拠となる関数名や行番号と一緒に教えてください。">変更影響は？</button>
-          <button class="quick-question" type="button" data-question="このファイルを初めて読む人向けに、読む順番を教えてください。">読む順番は？</button>
-        </div>
-
-        <div id="chatMessages" class="chat-messages">
-          <div class="chat-empty">解析結果を見て気になったところを、そのまま質問できます。</div>
-        </div>
-
-        <form id="askForm" class="ask-form">
-          <label class="field" for="questionInput">
-            <span>質問</span>
-            <textarea id="questionInput" rows="3" maxlength="3000" placeholder="例: analyze() は具体的に何をしていますか？"></textarea>
-          </label>
-          <div class="ask-actions">
-            <span id="askStatus" class="muted"></span>
-            <button id="askButton" type="submit">質問する</button>
-          </div>
-        </form>
-      </section>
-
-      <details class="panel details">
-        <summary>静的解析JSONを見る</summary>
-        <pre id="staticJson"></pre>
-      </details>
+    <section class="panel">
+      <div><p class="eyebrow">FILES</p><h3>個別ファイル解析</h3><p class="muted">各ファイルの要約はここから確認できます。</p></div>
+      <div id="projectFileCards" class="project-files"></div>
     </section>
-  </main>
-
-<script>
-let lastResult = null;
-let lastFile = null;
-let chatHistory = [];
-
-const byId = (id) => document.getElementById(id);
-
-function fillList(id, values, {stripLeadingNumber = false} = {}) {
-  const el = byId(id);
-  el.innerHTML = "";
-  const items = values && values.length ? values : ["特記事項なし"];
-  items.forEach(value => {
-    const li = document.createElement("li");
-    let text = String(value);
-    if (stripLeadingNumber) {
-      text = text.replace(/^\s*(?:\d+[.．)、:]|[①-⑳]|[（(]\d+[）)])\s*/, "");
-    }
-    li.textContent = text;
-    el.appendChild(li);
-  });
-}
-
-function lineRange(symbol) {
-  if (!symbol || !symbol.line) return "行番号不明";
-  if (symbol.end_line && symbol.end_line !== symbol.line) {
-    return `L${symbol.line}–L${symbol.end_line}`;
-  }
-  return `L${symbol.line}`;
-}
-
-function createBadge(text, type) {
-  const span = document.createElement("span");
-  span.className = `badge ${type}`;
-  span.textContent = text;
-  return span;
-}
-
-function findStaticSymbol(staticValues, llmName) {
-  if (!staticValues || !llmName) return null;
-  return staticValues.find(v =>
-    v.name === llmName ||
-    v.qualified_name === llmName ||
-    (v.qualified_name && v.qualified_name.endsWith(`.${llmName}`))
-  ) || null;
-}
-
-function renderStaticSymbols(id, values, kind) {
-  const el = byId(id);
-  el.innerHTML = "";
-  if (!values || !values.length) {
-    el.textContent = "検出なし";
-    return;
-  }
-
-  values.forEach(v => {
-    const box = document.createElement("div");
-    box.className = "symbol";
-
-    const head = document.createElement("div");
-    head.className = "symbol-head";
-    const name = document.createElement("strong");
-    name.textContent = v.qualified_name || v.name;
-    head.appendChild(name);
-    head.appendChild(createBadge(lineRange(v), "fact"));
-    box.appendChild(head);
-
-    if (kind === "function") {
-      const details = [];
-      if (v.async) details.push("async");
-      if (v.kind === "method") details.push("method");
-      if (v.args && v.args.length) details.push(`args: ${v.args.join(", ")}`);
-      if (details.length) {
-        const p = document.createElement("p");
-        p.className = "symbol-meta";
-        p.textContent = details.join(" / ");
-        box.appendChild(p);
-      }
-      if (v.calls && v.calls.length) {
-        const p = document.createElement("p");
-        p.className = "symbol-meta";
-        p.textContent = `主な呼び出し: ${v.calls.slice(0, 8).join(", ")}${v.calls.length > 8 ? " …" : ""}`;
-        box.appendChild(p);
-      }
-    } else if (v.bases && v.bases.length) {
-      const p = document.createElement("p");
-      p.className = "symbol-meta";
-      p.textContent = `継承: ${v.bases.join(", ")}`;
-      box.appendChild(p);
-    }
-
-    el.appendChild(box);
-  });
-}
-
-function renderInterpretedSymbols(id, llmValues, staticValues) {
-  const el = byId(id);
-  el.innerHTML = "";
-  if (!llmValues || !llmValues.length) {
-    el.textContent = "特記事項なし";
-    return;
-  }
-
-  llmValues.forEach(v => {
-    const fact = findStaticSymbol(staticValues, v.name);
-    const box = document.createElement("div");
-    box.className = "symbol";
-
-    const head = document.createElement("div");
-    head.className = "symbol-head";
-    const name = document.createElement("strong");
-    name.textContent = fact?.qualified_name || v.name;
-    head.appendChild(name);
-    if (fact) {
-      head.appendChild(createBadge(lineRange(fact), "fact"));
-    } else {
-      head.appendChild(createBadge("静的解析で未照合", "warning"));
-    }
-    box.appendChild(head);
-
-    const role = document.createElement("p");
-    role.className = "symbol-role";
-    role.appendChild(createBadge("LLM解釈", "interpretation"));
-    role.appendChild(document.createTextNode(` ${v.role}`));
-    box.appendChild(role);
-
-    el.appendChild(box);
-  });
-}
-
-function renderBasicFacts(data) {
-  const el = byId("basicFacts");
-  el.innerHTML = "";
-  const facts = [
-    ["言語", data.file.language],
-    ["行数", `${data.file.line_count} lines`],
-    ["文字数", `${data.file.char_count} chars`],
-    ["関数・メソッド", `${data.static_analysis.functions?.length || 0}`],
-    ["クラス", `${data.static_analysis.classes?.length || 0}`],
-  ];
-  facts.forEach(([label, value]) => {
-    const dt = document.createElement("dt");
-    dt.textContent = label;
-    const dd = document.createElement("dd");
-    dd.textContent = value;
-    el.append(dt, dd);
-  });
-}
-
-function resetChat() {
-  chatHistory = [];
-  if (lastResult) lastResult.qa_history = [];
-  const messages = byId("chatMessages");
-  messages.innerHTML = '<div class="chat-empty">解析結果を見て気になったところを、そのまま質問できます。</div>';
-  byId("askStatus").textContent = "";
-}
-
-function appendChatMessage(role, content, model = "") {
-  const messages = byId("chatMessages");
-  const empty = messages.querySelector(".chat-empty");
-  if (empty) empty.remove();
-
-  const item = document.createElement("div");
-  item.className = `chat-message ${role}`;
-
-  const label = document.createElement("div");
-  label.className = "chat-label";
-  label.textContent = role === "user" ? "YOU" : (model ? `OLLAMA / ${model}` : "OLLAMA");
-
-  const body = document.createElement("div");
-  body.className = "chat-body";
-  body.textContent = content;
-
-  item.append(label, body);
-  messages.appendChild(item);
-  item.scrollIntoView({behavior: "smooth", block: "nearest"});
-}
-
-function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = String(reader.result || "");
-      const comma = result.indexOf(",");
-      if (comma < 0) return reject(new Error("ファイルを質問用データへ変換できませんでした"));
-      resolve(result.slice(comma + 1));
-    };
-    reader.onerror = () => reject(new Error("ファイルを読み込めませんでした"));
-    reader.readAsDataURL(file);
-  });
-}
-
-async function loadStatus() {
-  try {
-    const res = await fetch("/api/status");
-    const data = await res.json();
-    const status = byId("status");
-    if (data.ollama_connected) {
-      status.textContent = `Ollama接続済み / ${data.models.length} model`;
-      status.classList.add("ok");
-      const list = byId("modelsList");
-      list.innerHTML = "";
-      data.models.forEach(name => {
-        const option = document.createElement("option");
-        option.value = name;
-        list.appendChild(option);
-      });
-    } else {
-      status.textContent = "Ollama未接続";
-      status.classList.add("ng");
-    }
-  } catch {
-    byId("status").textContent = "状態確認失敗";
-  }
-}
-
-byId("analyzeForm").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  byId("errorBox").classList.add("hidden");
-  byId("resultArea").classList.add("hidden");
-  byId("loadingBox").classList.remove("hidden");
-  byId("analyzeButton").disabled = true;
-
-  try {
-    const file = byId("fileInput").files[0];
-    if (!file) throw new Error("ファイルを選択してください");
-    const params = new URLSearchParams({
-      filename: file.name,
-      model: byId("modelInput").value.trim()
-    });
-    const res = await fetch(`/api/analyze?${params.toString()}`, {
-      method: "POST",
-      headers: {"Content-Type": "application/octet-stream"},
-      body: file
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || "解析に失敗しました");
-
-    lastResult = data;
-    lastResult.qa_history = [];
-    lastFile = file;
-    resetChat();
-
-    const a = data.analysis;
-    const s = data.static_analysis;
-    byId("fileTitle").textContent = data.file.name;
-    byId("fileMeta").textContent = `${data.file.language} / ${data.file.line_count} lines / model: ${data.model}`;
-
-    renderBasicFacts(data);
-    fillList("staticImports", s.imports);
-    renderStaticSymbols("staticFunctions", s.functions, "function");
-    renderStaticSymbols("staticClasses", s.classes, "class");
-
-    byId("purpose").textContent = a.purpose;
-    byId("overview").textContent = a.overview;
-    fillList("mainFlow", a.main_flow, {stripLeadingNumber: true});
-    fillList("changeRisks", a.change_risks);
-    renderInterpretedSymbols("keyFunctions", a.key_functions, s.functions);
-    renderInterpretedSymbols("keyClasses", a.key_classes, s.classes);
-    fillList("inputs", a.inputs);
-    fillList("outputs", a.outputs);
-    fillList("dependencies", a.external_dependencies);
-    fillList("relatedFiles", a.related_files);
-    fillList("unknowns", a.unknowns);
-    byId("staticJson").textContent = JSON.stringify(s, null, 2);
-    byId("resultArea").classList.remove("hidden");
-  } catch (error) {
-    byId("errorBox").textContent = error.message;
-    byId("errorBox").classList.remove("hidden");
-  } finally {
-    byId("loadingBox").classList.add("hidden");
-    byId("analyzeButton").disabled = false;
-  }
-});
-
-byId("askForm").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const question = byId("questionInput").value.trim();
-  if (!question) return;
-  if (!lastFile || !lastResult) {
-    byId("askStatus").textContent = "先にファイルを解析してください。";
-    return;
-  }
-
-  byId("askButton").disabled = true;
-  byId("questionInput").disabled = true;
-  byId("askStatus").textContent = "Ollamaがコードを確認中…";
-
-  const historyForRequest = chatHistory.slice(-8);
-  appendChatMessage("user", question);
-  byId("questionInput").value = "";
-
-  try {
-    const sourceBase64 = await fileToBase64(lastFile);
-    const res = await fetch("/api/ask", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({
-        filename: lastResult.file.name,
-        model: byId("modelInput").value.trim(),
-        question,
-        source_base64: sourceBase64,
-        history: historyForRequest
-      })
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || "質問への回答に失敗しました");
-
-    appendChatMessage("assistant", data.answer, data.model);
-    chatHistory.push({role: "user", content: question});
-    chatHistory.push({role: "assistant", content: data.answer});
-    chatHistory = chatHistory.slice(-8);
-
-    lastResult.qa_history.push({
-      question,
-      answer: data.answer,
-      model: data.model,
-      metrics: data.metrics
-    });
-    byId("askStatus").textContent = "";
-  } catch (error) {
-    appendChatMessage("assistant", `エラー: ${error.message}`);
-    byId("askStatus").textContent = "回答に失敗しました。";
-  } finally {
-    byId("askButton").disabled = false;
-    byId("questionInput").disabled = false;
-    byId("questionInput").focus();
-  }
-});
-
-byId("clearChatButton").addEventListener("click", resetChat);
-
-document.querySelectorAll(".quick-question").forEach(button => {
-  button.addEventListener("click", () => {
-    byId("questionInput").value = button.dataset.question || "";
-    byId("questionInput").focus();
-  });
-});
-
-byId("downloadButton").addEventListener("click", () => {
-  if (!lastResult) return;
-  const blob = new Blob([JSON.stringify(lastResult, null, 2)], {type: "application/json"});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `${lastResult.file.name}.analysis.json`;
-  a.click();
-  URL.revokeObjectURL(url);
-});
-
-loadStatus();
-</script>
+    <details class="panel details"><summary>プロジェクト解析JSONを見る</summary><pre id="projectJson"></pre></details>
+  </section>
+</main>
+<script src="/static/app.js"></script>
 </body>
 </html>

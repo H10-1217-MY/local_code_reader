@@ -86,3 +86,39 @@ button.quick-question:hover { background: #eef2f7; }
   button.compact, button.quick-question { width: auto; }
   .chat-message { max-width: 96%; }
 }
+
+/* v2.0 project mode */
+.control-panel { display: grid; gap: 18px; }
+.mode-tabs { display: flex; gap: 8px; padding: 5px; width: fit-content; background: #eef2f7; border-radius: 12px; }
+button.mode-tab { width: auto; padding: 9px 14px; background: transparent; color: #52627c; }
+button.mode-tab.active { background: white; color: #172033; box-shadow: 0 2px 8px rgba(26,39,64,.08); }
+.model-field { max-width: 520px; }
+.action-row { display: flex; justify-content: flex-end; margin-top: 14px; }
+.folder-preview { margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: #f7f9fc; font-size: 13px; }
+.mini { font-size: 12px; line-height: 1.55; }
+.dependency-list { display: grid; gap: 8px; }
+.dependency-edge { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 14px; padding: 10px 12px; border: 1px solid #e1e7f0; border-radius: 10px; background: #fbfcfe; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+.dependency-edge span { color: #718096; font-family: inherit; }
+.project-files { display: grid; gap: 10px; }
+.file-card { border: 1px solid #e1e7f0; border-radius: 12px; background: #fbfcfe; overflow: hidden; }
+.file-card summary { cursor: pointer; list-style: none; display: grid; gap: 5px; padding: 13px 15px; }
+.file-card summary::-webkit-details-marker { display: none; }
+.file-card summary span { color: #65748a; font-size: 13px; line-height: 1.5; }
+.file-card-body { border-top: 1px solid #e1e7f0; padding: 13px 15px; background: white; }
+.file-card-body p { line-height: 1.7; }
+#loadingBox { white-space: pre-line; }
+@media (max-width: 720px) {
+  .mode-tabs { width: 100%; }
+  button.mode-tab { flex: 1; }
+  .action-row button { width: 100%; }
+}
+
+/* v2.1 smart project filtering */
+.filter-counts { display: flex; flex-wrap: wrap; gap: 7px; margin: 8px 0 5px; }
+.filter-chip { display: inline-flex; align-items: center; padding: 4px 8px; border-radius: 999px; background: #e8edf5; font-size: 12px; font-weight: 700; }
+.filter-chip.llm { background: #e6edfb; }
+.filter-chip.structure { background: #e9f1e7; }
+.filter-chip.skip { background: #f3efe1; }
+.filter-chip.exclude { background: #f2e7e7; }
+.preview-meta { display: block; font-size: 12px; margin-top: 4px; }
+.ignored-files { max-height: 220px; overflow: auto; }
