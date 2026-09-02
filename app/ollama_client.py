@@ -57,6 +57,8 @@ SYSTEM_PROMPT = """あなたはソースコード読解と引き継ぎ支援を�
 3. 不明な点は unknowns に明示し、存在しない仕様・依存関係・ファイルを創作しないでください。
 4. 引き継ぎ担当者が短時間で理解できる日本語で説明してください。
 5. 静的解析情報が与えられた場合は、それを事実確認の補助として優先してください。
+6. main_flow の各要素には「1.」「2.」「①」などの番号を付けないでください。順序は配列順で表現してください。
+7. key_functions / key_classes の name は、可能な限り静的解析結果に存在する実名をそのまま使ってください。
 """
 
 
@@ -80,12 +82,12 @@ def _build_user_prompt(filename: str, static_analysis: dict[str, Any], source: s
 出力項目:
 - purpose: このファイルの役割を1〜3文
 - overview: 処理内容の全体説明
-- main_flow: 実行・処理フローを順番に
-- key_functions / key_classes: 主要なものと役割
+- main_flow: 実行・処理フローを順番に。各文字列には番号を付けない
+- key_functions / key_classes: 主要なものと役割。名前はコード中の実名を優先
 - inputs / outputs: 入出力
 - external_dependencies: 外部ライブラリや外部サービス
 - related_files: コードから読み取れる関連ファイル。推測のみなら書かない
-- change_risks: 変更時の注意点
+- change_risks: 変更時の注意点。断定できないものは断定しない
 - unknowns: この1ファイルだけでは判断できない点
 """
 

@@ -13,7 +13,7 @@ from .ollama_client import analyze_with_ollama, get_ollama_models
 
 BASE_DIR = Path(__file__).resolve().parent
 
-app = FastAPI(title="Local Code Reader", version="0.1.0")
+app = FastAPI(title="Local Code Reader", version="0.1.1")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 

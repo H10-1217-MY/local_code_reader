@@ -22,6 +22,20 @@ def detect_language(filename: str) -> str:
     return LANGUAGE_BY_SUFFIX.get(Path(filename).suffix.lower(), "Unknown")
 
 
+def _call_name(node: ast.AST) -> str | None:
+    """Best-effort readable name for a Python call target."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Call):
+        # Path(...).read_text() のようなチェーンでは、呼び出し元の名前を残す。
+        return _call_name(node.func)
+    if isinstance(node, ast.Attribute):
+        base = _call_name(node.value)
+        if base:
+            return f"{base}.{node.attr}"
+    return None
+
+
 def _python_analysis(source: str) -> dict[str, Any]:
     result: dict[str, Any] = {
         "imports": [],
@@ -39,28 +53,64 @@ def _python_analysis(source: str) -> dict[str, Any]:
     functions: list[dict[str, Any]] = []
     classes: list[dict[str, Any]] = []
 
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
+    class Visitor(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.class_stack: list[str] = []
+
+        def visit_Import(self, node: ast.Import) -> None:
             imports.extend(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom):
+
+        def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
             module = node.module or ""
             names = ", ".join(alias.name for alias in node.names)
             imports.append(f"from {module} import {names}")
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            functions.append({
-                "name": node.name,
-                "line": node.lineno,
-                "async": isinstance(node, ast.AsyncFunctionDef),
-                "args": [arg.arg for arg in node.args.args],
-                "docstring": ast.get_docstring(node),
-            })
-        elif isinstance(node, ast.ClassDef):
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            qualified_name = ".".join([*self.class_stack, node.name])
             classes.append({
                 "name": node.name,
+                "qualified_name": qualified_name,
                 "line": node.lineno,
+                "end_line": getattr(node, "end_lineno", node.lineno),
                 "bases": [ast.unparse(base) for base in node.bases],
                 "docstring": ast.get_docstring(node),
             })
+            self.class_stack.append(node.name)
+            self.generic_visit(node)
+            self.class_stack.pop()
+
+        def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+            qualified_name = ".".join([*self.class_stack, node.name])
+            calls: list[str] = []
+            for child in ast.walk(node):
+                if isinstance(child, ast.Call):
+                    name = _call_name(child.func)
+                    if name:
+                        calls.append(name)
+
+            positional_args = [arg.arg for arg in node.args.posonlyargs + node.args.args]
+            keyword_only_args = [arg.arg for arg in node.args.kwonlyargs]
+            functions.append({
+                "name": node.name,
+                "qualified_name": qualified_name,
+                "kind": "method" if self.class_stack else "function",
+                "line": node.lineno,
+                "end_line": getattr(node, "end_lineno", node.lineno),
+                "async": isinstance(node, ast.AsyncFunctionDef),
+                "args": positional_args,
+                "keyword_only_args": keyword_only_args,
+                "docstring": ast.get_docstring(node),
+                "calls": sorted(set(calls))[:50],
+            })
+            self.generic_visit(node)
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            self._visit_function(node)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            self._visit_function(node)
+
+    Visitor().visit(tree)
 
     result["imports"] = sorted(set(imports))
     result["functions"] = sorted(functions, key=lambda x: x["line"])
@@ -96,11 +146,18 @@ def _lightweight_analysis(source: str, language: str) -> dict[str, Any]:
     for lineno, line in enumerate(source.splitlines(), start=1):
         cm = class_pattern.search(line)
         if cm:
-            classes.append({"name": cm.group(1), "line": lineno})
+            classes.append({"name": cm.group(1), "qualified_name": cm.group(1), "line": lineno, "end_line": None})
         for pattern in fn_patterns:
             fm = pattern.search(line)
             if fm and fm.group(1) not in {"if", "for", "while", "switch", "catch"}:
-                functions.append({"name": fm.group(1), "line": lineno})
+                functions.append({
+                    "name": fm.group(1),
+                    "qualified_name": fm.group(1),
+                    "kind": "function",
+                    "line": lineno,
+                    "end_line": None,
+                    "calls": [],
+                })
                 break
 
     return {
@@ -108,7 +165,7 @@ def _lightweight_analysis(source: str, language: str) -> dict[str, Any]:
         "functions": functions[:200],
         "classes": classes[:100],
         "syntax_error": None,
-        "note": f"{language} はv1では軽量なパターン解析です。意味解析はOllamaが補完します。",
+        "note": f"{language} はv1.1では軽量なパターン解析です。意味解析はOllamaが補完します。",
     }
 
 

@@ -12,7 +12,7 @@
       <div>
         <p class="eyebrow">LOCAL / OLLAMA</p>
         <h1>Local Code Reader</h1>
-        <p class="subtitle">ソースコードを外部へ送らず、1ファイルずつ構造と役割を読む v1。</p>
+        <p class="subtitle">ソースコードを外部へ送らず、静的解析の事実とLLMの解釈を分けて読む v1.1。</p>
       </div>
       <div id="status" class="status">Ollama確認中…</div>
     </header>
@@ -50,6 +50,35 @@
         <button id="downloadButton" class="secondary" type="button">JSON保存</button>
       </div>
 
+      <div class="section-label">
+        <span class="badge fact">静的解析 / 確認できた事実</span>
+        <span>ここはLLMの推測ではなく、コード構造から取得した情報です。</span>
+      </div>
+
+      <div class="grid fact-grid">
+        <article class="card">
+          <h3>基本情報</h3>
+          <dl id="basicFacts" class="fact-list"></dl>
+        </article>
+        <article class="card">
+          <h3>import / include</h3>
+          <ul id="staticImports"></ul>
+        </article>
+        <article class="card wide">
+          <h3>関数・メソッド</h3>
+          <div id="staticFunctions" class="symbol-list"></div>
+        </article>
+        <article class="card wide">
+          <h3>クラス・構造体</h3>
+          <div id="staticClasses" class="symbol-list"></div>
+        </article>
+      </div>
+
+      <div class="section-label interpretation-label">
+        <span class="badge interpretation">Ollama / LLMによる解釈</span>
+        <span>役割や処理意図の説明です。判断できない点は下部の「不明点」に分離します。</span>
+      </div>
+
       <div class="grid">
         <article class="card wide">
           <h3>このファイルの役割</h3>
@@ -64,13 +93,13 @@
           <h3>変更時の注意</h3>
           <ul id="changeRisks"></ul>
         </article>
-        <article class="card">
-          <h3>主要な関数</h3>
-          <div id="keyFunctions"></div>
+        <article class="card wide">
+          <h3>主要な関数・メソッド</h3>
+          <div id="keyFunctions" class="symbol-list"></div>
         </article>
-        <article class="card">
+        <article class="card wide">
           <h3>主要なクラス</h3>
-          <div id="keyClasses"></div>
+          <div id="keyClasses" class="symbol-list"></div>
         </article>
         <article class="card">
           <h3>入力</h3>
@@ -88,14 +117,14 @@
           <h3>関連ファイル</h3>
           <ul id="relatedFiles"></ul>
         </article>
-        <article class="card wide">
+        <article class="card wide unknown-card">
           <h3>このファイルだけでは分からないこと</h3>
           <ul id="unknowns"></ul>
         </article>
       </div>
 
       <details class="panel details">
-        <summary>静的解析結果を見る</summary>
+        <summary>静的解析JSONを見る</summary>
         <pre id="staticJson"></pre>
       </details>
     </section>
@@ -106,31 +135,145 @@ let lastResult = null;
 
 const byId = (id) => document.getElementById(id);
 
-function fillList(id, values) {
+function fillList(id, values, {stripLeadingNumber = false} = {}) {
   const el = byId(id);
   el.innerHTML = "";
   const items = values && values.length ? values : ["特記事項なし"];
-  items.forEach(v => {
+  items.forEach(value => {
     const li = document.createElement("li");
-    li.textContent = v;
+    let text = String(value);
+    if (stripLeadingNumber) {
+      // LLMが番号を付けても <ol> 側の番号と二重にならないよう除去する。
+      text = text.replace(/^\s*(?:\d+[.．)、:]|[①-⑳]|[（(]\d+[）)])\s*/, "");
+    }
+    li.textContent = text;
     el.appendChild(li);
   });
 }
 
-function fillNamed(id, values) {
+function lineRange(symbol) {
+  if (!symbol || !symbol.line) return "行番号不明";
+  if (symbol.end_line && symbol.end_line !== symbol.line) {
+    return `L${symbol.line}–L${symbol.end_line}`;
+  }
+  return `L${symbol.line}`;
+}
+
+function createBadge(text, type) {
+  const span = document.createElement("span");
+  span.className = `badge ${type}`;
+  span.textContent = text;
+  return span;
+}
+
+function findStaticSymbol(staticValues, llmName) {
+  if (!staticValues || !llmName) return null;
+  return staticValues.find(v =>
+    v.name === llmName ||
+    v.qualified_name === llmName ||
+    (v.qualified_name && v.qualified_name.endsWith(`.${llmName}`))
+  ) || null;
+}
+
+function renderStaticSymbols(id, values, kind) {
   const el = byId(id);
   el.innerHTML = "";
   if (!values || !values.length) {
+    el.textContent = "検出なし";
+    return;
+  }
+
+  values.forEach(v => {
+    const box = document.createElement("div");
+    box.className = "symbol";
+
+    const head = document.createElement("div");
+    head.className = "symbol-head";
+    const name = document.createElement("strong");
+    name.textContent = v.qualified_name || v.name;
+    head.appendChild(name);
+    head.appendChild(createBadge(lineRange(v), "fact"));
+    box.appendChild(head);
+
+    if (kind === "function") {
+      const details = [];
+      if (v.async) details.push("async");
+      if (v.kind === "method") details.push("method");
+      if (v.args && v.args.length) details.push(`args: ${v.args.join(", ")}`);
+      if (details.length) {
+        const p = document.createElement("p");
+        p.className = "symbol-meta";
+        p.textContent = details.join(" / ");
+        box.appendChild(p);
+      }
+      if (v.calls && v.calls.length) {
+        const p = document.createElement("p");
+        p.className = "symbol-meta";
+        p.textContent = `主な呼び出し: ${v.calls.slice(0, 8).join(", ")}${v.calls.length > 8 ? " …" : ""}`;
+        box.appendChild(p);
+      }
+    } else if (v.bases && v.bases.length) {
+      const p = document.createElement("p");
+      p.className = "symbol-meta";
+      p.textContent = `継承: ${v.bases.join(", ")}`;
+      box.appendChild(p);
+    }
+
+    el.appendChild(box);
+  });
+}
+
+function renderInterpretedSymbols(id, llmValues, staticValues) {
+  const el = byId(id);
+  el.innerHTML = "";
+  if (!llmValues || !llmValues.length) {
     el.textContent = "特記事項なし";
     return;
   }
-  values.forEach(v => {
-    const p = document.createElement("p");
-    const strong = document.createElement("strong");
-    strong.textContent = v.name;
-    p.appendChild(strong);
-    p.appendChild(document.createTextNode(`: ${v.role}`));
-    el.appendChild(p);
+
+  llmValues.forEach(v => {
+    const fact = findStaticSymbol(staticValues, v.name);
+    const box = document.createElement("div");
+    box.className = "symbol";
+
+    const head = document.createElement("div");
+    head.className = "symbol-head";
+    const name = document.createElement("strong");
+    name.textContent = fact?.qualified_name || v.name;
+    head.appendChild(name);
+    if (fact) {
+      head.appendChild(createBadge(lineRange(fact), "fact"));
+    } else {
+      head.appendChild(createBadge("静的解析で未照合", "warning"));
+    }
+    box.appendChild(head);
+
+    const role = document.createElement("p");
+    role.className = "symbol-role";
+    role.appendChild(createBadge("LLM解釈", "interpretation"));
+    role.appendChild(document.createTextNode(` ${v.role}`));
+    box.appendChild(role);
+
+    el.appendChild(box);
+  });
+}
+
+function renderBasicFacts(data) {
+  const el = byId("basicFacts");
+  el.innerHTML = "";
+  const facts = [
+    ["言語", data.file.language],
+    ["行数", `${data.file.line_count} lines`],
+    ["文字数", `${data.file.char_count} chars`],
+    ["関数・メソッド", `${data.static_analysis.functions?.length || 0}`],
+    ["クラス", `${data.static_analysis.classes?.length || 0}`],
+  ];
+  facts.forEach(([label, value]) => {
+    const dt = document.createElement("dt");
+    dt.textContent = label;
+    const dd = document.createElement("dd");
+    dd.textContent = value;
+    el.append(dt, dd);
   });
 }
 
@@ -143,6 +286,7 @@ async function loadStatus() {
       status.textContent = `Ollama接続済み / ${data.models.length} model`;
       status.classList.add("ok");
       const list = byId("modelsList");
+      list.innerHTML = "";
       data.models.forEach(name => {
         const option = document.createElement("option");
         option.value = name;
@@ -181,20 +325,27 @@ byId("analyzeForm").addEventListener("submit", async (event) => {
 
     lastResult = data;
     const a = data.analysis;
+    const s = data.static_analysis;
     byId("fileTitle").textContent = data.file.name;
     byId("fileMeta").textContent = `${data.file.language} / ${data.file.line_count} lines / model: ${data.model}`;
+
+    renderBasicFacts(data);
+    fillList("staticImports", s.imports);
+    renderStaticSymbols("staticFunctions", s.functions, "function");
+    renderStaticSymbols("staticClasses", s.classes, "class");
+
     byId("purpose").textContent = a.purpose;
     byId("overview").textContent = a.overview;
-    fillList("mainFlow", a.main_flow);
+    fillList("mainFlow", a.main_flow, {stripLeadingNumber: true});
     fillList("changeRisks", a.change_risks);
-    fillNamed("keyFunctions", a.key_functions);
-    fillNamed("keyClasses", a.key_classes);
+    renderInterpretedSymbols("keyFunctions", a.key_functions, s.functions);
+    renderInterpretedSymbols("keyClasses", a.key_classes, s.classes);
     fillList("inputs", a.inputs);
     fillList("outputs", a.outputs);
     fillList("dependencies", a.external_dependencies);
     fillList("relatedFiles", a.related_files);
     fillList("unknowns", a.unknowns);
-    byId("staticJson").textContent = JSON.stringify(data.static_analysis, null, 2);
+    byId("staticJson").textContent = JSON.stringify(s, null, 2);
     byId("resultArea").classList.remove("hidden");
   } catch (error) {
     byId("errorBox").textContent = error.message;

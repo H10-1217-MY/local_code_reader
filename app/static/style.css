@@ -10,7 +10,7 @@ header, .result-head { display: flex; align-items: flex-start; justify-content: 
 h1 { margin: 4px 0 8px; font-size: clamp(32px, 5vw, 52px); letter-spacing: -0.04em; }
 h2 { margin: 4px 0; }
 h3 { margin-top: 0; }
-.subtitle, .muted, .privacy, .muted-text { color: #627087; }
+.subtitle, .muted, .privacy, .muted-text, .section-label { color: #627087; }
 .eyebrow { margin: 0; font-size: 12px; font-weight: 800; letter-spacing: .16em; color: #52627c; }
 .status { padding: 9px 12px; border-radius: 999px; background: #dfe5ee; font-size: 13px; white-space: nowrap; }
 .status.ok { background: #dff4e7; }
@@ -29,14 +29,31 @@ button.secondary { background: white; color: #172033; border: 1px solid #cbd5e1;
 .error { margin-top: 20px; border-radius: 12px; padding: 14px 16px; background: #fee8e8; border: 1px solid #f4bcbc; }
 .hidden { display: none !important; }
 .result-head { margin-top: 30px; align-items: center; }
+.section-label { display: flex; align-items: center; gap: 10px; margin: 24px 0 10px; font-size: 13px; }
+.interpretation-label { margin-top: 34px; }
+.badge { display: inline-flex; align-items: center; width: fit-content; border-radius: 999px; padding: 4px 8px; font-size: 11px; font-weight: 800; line-height: 1.2; white-space: nowrap; }
+.badge.fact { background: #e7f0ff; color: #244d83; }
+.badge.interpretation { background: #f1eaff; color: #65419a; }
+.badge.warning { background: #fff1d6; color: #7b5716; }
 .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 16px; }
+.fact-grid { margin-top: 0; }
 .card { padding: 20px; border-radius: 15px; min-width: 0; }
 .card.wide { grid-column: 1 / -1; }
 .card p, .card li { line-height: 1.7; }
 .card ul, .card ol { padding-left: 22px; margin-bottom: 0; }
+.unknown-card { border-style: dashed; }
+.fact-list { display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; margin: 0; }
+.fact-list dt { color: #627087; }
+.fact-list dd { margin: 0; font-weight: 700; }
+.symbol-list { display: grid; gap: 10px; }
+.symbol { padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fbfcfe; }
+.symbol-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.symbol-meta, .symbol-role { margin: 7px 0 0; font-size: 14px; color: #59677c; line-height: 1.6 !important; }
+.symbol-role .badge { margin-right: 3px; vertical-align: 1px; }
 .details pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; background: #f7f9fc; padding: 14px; border-radius: 10px; }
 @media (max-width: 720px) {
   header, .result-head, .row { flex-direction: column; }
+  .section-label { align-items: flex-start; flex-direction: column; }
   .grid { grid-template-columns: 1fr; }
   .card.wide { grid-column: auto; }
   button { width: 100%; }
