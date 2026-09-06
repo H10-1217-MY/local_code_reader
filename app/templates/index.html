@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Local Code Reader v2.1</title>
+  <title>Local Code Reader v2.2</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -12,7 +12,7 @@
     <div>
       <p class="eyebrow">LOCAL / OLLAMA</p>
       <h1>Local Code Reader</h1>
-      <p class="subtitle">1ファイル読解に加えて、プロジェクトフォルダ全体の地図を作る v2.1。空・生成物・依存メタデータを賢く振り分けます。</p>
+      <p class="subtitle">1ファイル読解に加えて、プロジェクト全体を静的解析で検証しながら読む v2.2。存在しないファイル名や関数名をLLM出力から弾きます。</p>
     </div>
     <div id="status" class="status">Ollama確認中…</div>
   </header>
@@ -50,7 +50,7 @@
         <div id="folderPreview" class="folder-preview muted">フォルダ未選択</div>
         <div class="action-row"><button id="projectAnalyzeButton" type="submit">プロジェクトを解析</button></div>
       </form>
-      <p class="privacy">.git / .venv / node_modules / build / dist / __pycache__、空ファイル、生成物などを自動整理します。依存定義・lock・ignore系は原則LLMを使わず構造だけ保持します。v2.1は要約対象ファイル数に上限があります。</p>
+      <p class="privacy">.git / .venv / node_modules / build / dist / __pycache__、空ファイル、生成物などを自動整理します。依存定義・lock・ignore系は原則LLMを使わず構造だけ保持します。v2.2は要約対象ファイル数に上限があります。</p>
     </div>
 
     <p class="privacy">ソースコードはアプリ側のディスクへ保存しません。通信先は localhost のFastAPIとOllamaです。</p>

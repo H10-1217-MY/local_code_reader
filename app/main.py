@@ -33,11 +33,13 @@ from .project_analyzer import (
     build_project_index,
     build_structure_only_analysis,
     classify_project_content,
+    sanitize_project_analysis,
+    sanitize_project_files,
 )
 
 BASE_DIR = Path(__file__).resolve().parent
 
-app = FastAPI(title="Local Code Reader", version="0.2.1")
+app = FastAPI(title="Local Code Reader", version="0.2.2")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
@@ -212,7 +214,7 @@ async def analyze_project_file(request: Request, path: str = Query(..., min_leng
 @app.post("/api/project/summarize")
 def summarize_project(payload: ProjectSummaryRequest):
     if len(payload.files) > MAX_PROJECT_FILES:
-        raise HTTPException(status_code=400, detail=f"v2.1では最大 {MAX_PROJECT_FILES} ファイルまでです。")
+        raise HTTPException(status_code=400, detail=f"v2.2では最大 {MAX_PROJECT_FILES} ファイルまでです。")
 
     compact_files: list[dict[str, Any]] = []
     for item in payload.files:
@@ -229,20 +231,31 @@ def summarize_project(payload: ProjectSummaryRequest):
         })
 
     project_index = build_project_index(compact_files)
+    grounded_files, file_grounding = sanitize_project_files(compact_files, project_index)
     try:
         llm_result = analyze_project_with_ollama(
             project_name=payload.project_name.strip(),
-            files=compact_files,
+            files=grounded_files,
             project_index=project_index,
             model=payload.model.strip() or None,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+    grounded_project_analysis, project_grounding = sanitize_project_analysis(
+        llm_result.get("analysis") or {}, project_index
+    )
     return {
         "project": {"name": payload.project_name.strip(), "file_count": len(compact_files)},
         "project_index": project_index,
-        **llm_result,
+        "model": llm_result.get("model"),
+        "analysis": grounded_project_analysis,
+        "metrics": llm_result.get("metrics") or {},
+        "grounding": {
+            "file_analysis": file_grounding,
+            "project_analysis": project_grounding,
+            "removed_claim_count": int(file_grounding.get("removed_claim_count") or 0) + int(project_grounding.get("removed_claim_count") or 0),
+        },
     }
 
 

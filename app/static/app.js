@@ -173,8 +173,9 @@ function renderProjectPairList(id, items, keyName, valueName) {
 function renderProjectResult(summary, fileResults, skippedFiles = [], excludedFiles = []) {
   lastProjectResult = {...summary, files: fileResults, skipped_files: skippedFiles, excluded_files: excludedFiles}; const a = summary.analysis; const idx = summary.project_index;
   const pc = idx.processing_counts || {}; const llmCount = pc.llm || 0; const structureCount = pc.structure || 0;
-  byId("projectTitle").textContent = summary.project.name; byId("projectMeta").textContent = `${summary.project.file_count} included / LLM ${llmCount} / structure ${structureCount} / skipped ${skippedFiles.length} / excluded ${excludedFiles.length} / model: ${summary.model}`;
-  const facts = byId("projectFacts"); facts.innerHTML = ""; [["プロジェクト要約対象", idx.file_count], ["LLM個別解析", llmCount], ["構造のみ", structureCount], ["スキップ", skippedFiles.length], ["除外", excludedFiles.length], ["総行数", idx.total_lines], ["依存エッジ", idx.local_dependency_edges?.length || 0]].forEach(([k,v]) => { const dt=document.createElement("dt");dt.textContent=k;const dd=document.createElement("dd");dd.textContent=v;facts.append(dt,dd); });
+  const removedClaims = summary.grounding?.removed_claim_count || 0;
+  byId("projectTitle").textContent = summary.project.name; byId("projectMeta").textContent = `${summary.project.file_count} included / LLM ${llmCount} / structure ${structureCount} / grounded ${removedClaims} claims / skipped ${skippedFiles.length} / excluded ${excludedFiles.length} / model: ${summary.model}`;
+  const facts = byId("projectFacts"); facts.innerHTML = ""; [["プロジェクト要約対象", idx.file_count], ["LLM個別解析", llmCount], ["構造のみ", structureCount], ["静的照合で除外したLLM主張", removedClaims], ["スキップ", skippedFiles.length], ["除外", excludedFiles.length], ["総行数", idx.total_lines], ["依存エッジ", idx.local_dependency_edges?.length || 0]].forEach(([k,v]) => { const dt=document.createElement("dt");dt.textContent=k;const dd=document.createElement("dd");dd.textContent=v;facts.append(dt,dd); });
   fillList("projectLanguages", (idx.languages || []).map(x => `${x.language}: ${x.files} files`));
   const edges = byId("dependencyEdges"); edges.innerHTML = ""; if (!idx.local_dependency_edges?.length) edges.textContent = "プロジェクト内import/includeの直接一致は検出されませんでした。"; else idx.local_dependency_edges.forEach(e => { const row=document.createElement("div");row.className="dependency-edge";row.textContent=`${e.source} → ${e.target}`;const small=document.createElement("span");small.textContent=`根拠: ${e.evidence}`;row.appendChild(small);edges.appendChild(row); }); byId("dependencyNote").textContent = idx.note || "";
   const skipList = byId("projectSkippedFiles"); skipList.innerHTML = ""; const ignored = [...skippedFiles, ...excludedFiles]; if (!ignored.length) skipList.textContent="なし"; else ignored.slice(0,80).forEach(item => { const li=document.createElement("li"); li.textContent=`${item.path} — ${item.reason}`; skipList.appendChild(li); });
@@ -191,7 +192,7 @@ byId("projectForm").addEventListener("submit", async (event) => {
   projectSkipped = classified.filter(item => item.mode === "skip").map(item => ({path:normalizedRelativePath(item.file), reason:item.reason}));
   projectExcluded = classified.filter(item => item.mode === "exclude").map(item => ({path:normalizedRelativePath(item.file), reason:item.reason}));
   if (!files.length) { showError("LLM解析または構造解析の対象になるファイルがありません。"); return; }
-  const maxFiles = appStatus?.limits?.max_project_files || 40; if (files.length > maxFiles) { showError(`解析対象が ${files.length} 件あります。v2.1の上限 ${maxFiles} 件以内のフォルダで試してください。`); return; }
+  const maxFiles = appStatus?.limits?.max_project_files || 40; if (files.length > maxFiles) { showError(`解析対象が ${files.length} 件あります。v2.2の上限 ${maxFiles} 件以内のフォルダで試してください。`); return; }
   byId("projectAnalyzeButton").disabled = true; projectFiles = []; const projectName = projectNameFromFiles(Array.from(byId("folderInput").files)); const model = byId("modelInput").value.trim();
   try {
     for (let i=0;i<files.length;i++) {

@@ -1,96 +1,117 @@
-# Local Code Reader v2.1
+# Local Code Reader v2.2
 
 ローカルOllamaを使い、機密ソースコードを外部LLMへ送らずに読むためのコード理解・引き継ぎ支援ツールです。
 
-v2.1では、v1.2の「1ファイル解析 + 追加質問」を残したまま、**プロジェクトフォルダ単位の解析**を追加しました。
+v2.2では v2.1 のプロジェクト解析を土台に、**LLMが存在しないファイル・関数・クラス・依存ライブラリをそれらしく補完する問題を、静的解析で後から検証して落とす仕組み**を追加しました。
 
-## v2.1でできること
-
-### 1ファイル解析
-
-- Pythonは `ast` でimport、関数、クラス、行範囲、呼び出し先を静的解析
-- その他の言語は軽量パターン解析
-- 静的解析結果とOllama解釈を分離表示
-- 解析したファイルについて追加質問
-- JSON保存
-
-### プロジェクト解析
-
-ブラウザでフォルダを選ぶと次の順番で処理します。
+## v2.2の考え方
 
 ```text
-project/
-  app/main.py
-  app/analyzer.py
-  config.yaml
-  README.md
-       ↓
-対象ファイル抽出
-       ↓
-各ファイルを1つずつ静的解析 + Ollama要約
-       ↓
-解析結果だけを集約
-       ↓
-import/includeからローカル依存関係をbest-effortで照合
-       ↓
-Ollamaがプロジェクト全体を要約
+静的解析 = 事実の境界
+      ↓
+Ollama = 意味・役割の解釈
+      ↓
+静的解析で再照合
+      ↓
+未確認の固有名詞を除外
 ```
 
-画面には次を表示します。
+LLMに「全部を正しく当ててもらう」のではなく、ファイル名・関数名・クラス名・importなど機械的に確認できる情報は静的解析側を正とします。
 
-- プロジェクトの目的・概要
-- 総ファイル数 / 総行数 / 言語内訳
-- プロジェクト内のローカル依存関係
-- 処理・データフロー
-- 入口になりそうなファイル
-- 主要コンポーネント
-- 引き継ぎ時に最初に読むファイル候補
-- 設定・データ・資料
-- 外部依存
-- 変更時の注意
-- まだ判断できない点
-- 各ファイルの個別要約
+## 主な変更
 
-## 機密コードの扱い
+### 1. 個別ファイルのLLM出力を静的解析で照合
 
-v2.1でもアプリ側にソースコードを保存しません。
+`key_functions` / `key_classes` は、静的解析に存在する名前だけ残します。
 
-プロジェクト解析では、ブラウザが対象ファイルを1つずつ `localhost` のFastAPIへ送信し、各ファイルの解析が終わると、プロジェクト全体の要約には**元ソースではなく個別解析結果だけ**を送ります。
+例:
 
 ```text
-Browser File API
-     ↓ 1 fileずつ
-FastAPI (memory)
-     ↓
-Ollama localhost
-     ↓
-個別解析JSON
-     ↓
-Project index + project summary
+LLM: analyze_single_file_with_ollama()
+AST: その関数は存在しない
+→ 解析結果から除外
 ```
 
-JSON保存にもソースコード本体は含めません。
+外部依存も、Python/JavaScriptについては import / require から機械的に抽出します。Python標準ライブラリやNode.js built-inは外部依存から除外します。
 
-ただし、OS・ブラウザ・プロキシ・Ollamaの設定やログなど別レイヤーまで含めて痕跡ゼロを保証するものではありません。機密用途では `127.0.0.1` のまま外部公開せず運用してください。
+### 2. プロジェクト全体のpathを実在ファイルに限定
 
-## v2.1の対象除外
+プロジェクト要約の次の項目は `project_index.paths` と照合します。
 
-ブラウザ側で代表的な生成物・環境フォルダを除外します。
+- `entry_points`
+- `components`
+- `read_first`
+- `config_and_data_files`
 
-- `.git`
-- `.venv` / `venv` / `env`
-- `node_modules`
-- `__pycache__`
-- `build` / `dist`
-- `.idea` / `.vscode`
-- pytest / mypy / ruff系キャッシュ
+存在しない `README.md` や `frontend.js` などをLLMが返しても、最終結果には残しません。
 
-対象ファイル数の初期上限は40ファイルです。環境変数 `MAX_PROJECT_FILES` で変更できます。
+`architecture_flow` / `change_risks` に存在しない具体的なファイル名が混入した場合も、その項目を除外します。
+
+### 3. Grounding report
+
+JSONには次のような検証結果を追加します。
+
+```json
+{
+  "grounding": {
+    "removed_claim_count": 5,
+    "file_analysis": {
+      "removed_claims": []
+    },
+    "project_analysis": {
+      "removed_claims": []
+    }
+  }
+}
+```
+
+画面にも「静的照合で除外したLLM主張」の件数を表示します。
+
+### 4. JavaScript静的解析改善
+
+v2.1の汎用正規表現では、次のようなメソッド呼び出しを関数定義として誤検出することがありました。
+
+```text
+forEach
+byId
+querySelectorAll
+```
+
+v2.2ではJavaScript/TypeScript専用の宣言パターンを使い、主に次を取得します。
+
+- `function foo()`
+- `async function foo()`
+- `const foo = () => ...`
+- `const foo = async () => ...`
+- `class Foo`
+- `import` / `require`
+
+### 5. CSS静的解析改善
+
+`@media`を関数として扱わなくなりました。
+
+代わりに次を取得します。
+
+- CSS selector
+- `@media` / `@supports` / `@keyframes` 等
+- CSS custom property (`--variable`)
+- `@import`
+
+### 6. HTML参照解析
+
+HTMLから次のローカル参照候補を取得します。
+
+- `<script src="...">`
+- `<link href="...">`
+- `<img src="...">`
+- `<source src="...">`
+
+これらもプロジェクト内依存エッジの静的根拠として使います。
 
 ## セットアップ
 
 ```bash
-cd local_code_reader_v2_0
+cd local_code_reader_v2_2
 ./setup.sh
 ./run.sh
 ```
@@ -107,44 +128,40 @@ Ollamaが既に動いているかは次で確認できます。
 curl http://127.0.0.1:11434/api/tags
 ```
 
-## 設定
+## 機密コードの扱い
 
-`.env.example` または環境変数で変更できます。
-
-```text
-OLLAMA_BASE_URL=http://127.0.0.1:11434
-OLLAMA_MODEL=qwen3:8b
-MAX_FILE_BYTES=2097152
-MAX_PROJECT_FILES=40
-REQUEST_TIMEOUT_SECONDS=300
-```
-
-## v2.1時点の制限
-
-- プロジェクト解析はファイルごとにOllamaを呼ぶため、大きなプロジェクトでは時間がかかります。
-- Python以外の静的解析はまだ簡易版です。
-- import/includeによる依存関係はbest-effortであり、動的import、DI、設定経由の参照などは追跡しません。
-- v2.1では**プロジェクト全体への追加質問**はまだありません。次段階で追加予定です。
-
-## 次の候補
-
-v2.1では、プロジェクト解析結果に対して次のような質問ができる形へ発展できます。
+これまでと同じく、アプリ側に元ソースコードを保存しません。
 
 ```text
-「このシステムの起動点は？」
-「Ollamaとの通信はどこ？」
-「この変更はどのファイルへ影響しそう？」
-「新人が最初に読む順番を詳しく教えて」
+Browser File API
+     ↓ 1 fileずつ
+FastAPI (memory)
+     ↓
+Ollama localhost
+     ↓
+静的解析 + 個別要約
+     ↓
+Grounding
+     ↓
+Project summary
 ```
 
+JSON保存にも元ソースコードは含みません。
 
-## v2.1 smart filtering
+ただし、OS・ブラウザ・プロキシ・Ollamaの設定やログなど別レイヤーまで含めた痕跡ゼロを保証するものではありません。機密用途では `127.0.0.1` のまま外部公開せず運用してください。
 
-プロジェクトフォルダを選択したあと、ファイルを次のように振り分けます。
+## v2.2時点の制限
 
-- `llm`: コードやREADMEなど。静的解析 + Ollama個別要約
-- `structure`: 依存定義、lock、ignore、単純な `__init__.py` など。LLMを使わずメタデータだけ抽出
-- `skip`: 空/空白のみのファイルなど
-- `exclude`: キャッシュ/生成物/未対応形式/上限超過など
+- PythonはASTで詳細解析しますが、JavaScript/TypeScript/CSS/HTML等は依然として軽量解析です。
+- JavaScriptのclass methodや動的importなど、すべての構文を完全には追跡しません。
+- import/reference依存はbest-effortで、DI・設定経由・動的ロードは追跡しません。
+- 自由文の意味解釈そのものはLLMが担当するため、固有名詞以外の誤解釈が完全になくなるわけではありません。
+- プロジェクト全体への追加質問はまだ未実装です。
 
-`__init__.py` はファイル名だけで一律除外しません。空ならskip、importや `__all__` 等だけならstructure、実行ロジックがあればllmへ回します。
+## テスト
+
+```bash
+python -m pytest -q
+```
+
+v2.2では静的解析・依存抽出・groundingを含むテストを追加しています。
