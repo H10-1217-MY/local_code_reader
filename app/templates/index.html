@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Local Code Reader v2.2</title>
+  <title>Local Code Reader v2.3</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -12,7 +12,7 @@
     <div>
       <p class="eyebrow">LOCAL / OLLAMA</p>
       <h1>Local Code Reader</h1>
-      <p class="subtitle">1ファイル読解に加えて、プロジェクト全体を静的解析で検証しながら読む v2.2。存在しないファイル名や関数名をLLM出力から弾きます。</p>
+      <p class="subtitle">1ファイル読解に加えて、プロジェクト全体を静的解析で検証しながら読む v2.3。grounding済みの結果だけを最終UI/JSONへ反映し、事実とAI解釈を分離します。</p>
     </div>
     <div id="status" class="status">Ollama確認中…</div>
   </header>
@@ -50,7 +50,7 @@
         <div id="folderPreview" class="folder-preview muted">フォルダ未選択</div>
         <div class="action-row"><button id="projectAnalyzeButton" type="submit">プロジェクトを解析</button></div>
       </form>
-      <p class="privacy">.git / .venv / node_modules / build / dist / __pycache__、空ファイル、生成物などを自動整理します。依存定義・lock・ignore系は原則LLMを使わず構造だけ保持します。v2.2は要約対象ファイル数に上限があります。</p>
+      <p class="privacy">.git / .venv / node_modules / build / dist / __pycache__、空ファイル、生成物などを自動整理します。依存定義・lock・ignore系は原則LLMを使わず構造だけ保持します。v2.3は要約対象ファイル数に上限があります。</p>
     </div>
 
     <p class="privacy">ソースコードはアプリ側のディスクへ保存しません。通信先は localhost のFastAPIとOllamaです。</p>
@@ -69,6 +69,8 @@
     <div class="grid fact-grid">
       <article class="card"><h3>基本情報</h3><dl id="basicFacts" class="fact-list"></dl></article>
       <article class="card"><h3>import / include</h3><ul id="staticImports"></ul></article>
+      <article class="card"><h3>外部依存（静的抽出）</h3><ul id="staticDependencies"></ul></article>
+      <article class="card"><h3>ローカル参照候補</h3><ul id="staticReferences"></ul></article>
       <article class="card wide"><h3>関数・メソッド</h3><div id="staticFunctions" class="symbol-list"></div></article>
       <article class="card wide"><h3>クラス・構造体</h3><div id="staticClasses" class="symbol-list"></div></article>
     </div>
@@ -82,8 +84,6 @@
       <article class="card wide"><h3>主要なクラス</h3><div id="keyClasses" class="symbol-list"></div></article>
       <article class="card"><h3>入力</h3><ul id="inputs"></ul></article>
       <article class="card"><h3>出力</h3><ul id="outputs"></ul></article>
-      <article class="card"><h3>外部依存</h3><ul id="dependencies"></ul></article>
-      <article class="card"><h3>関連ファイル</h3><ul id="relatedFiles"></ul></article>
       <article class="card wide unknown-card"><h3>このファイルだけでは分からないこと</h3><ul id="unknowns"></ul></article>
     </div>
 
@@ -116,6 +116,7 @@
     <div class="grid">
       <article class="card"><h3>規模</h3><dl id="projectFacts" class="fact-list"></dl></article>
       <article class="card"><h3>言語</h3><ul id="projectLanguages"></ul></article>
+      <article class="card"><h3>外部依存（静的抽出）</h3><ul id="projectDependencies"></ul></article>
       <article class="card wide"><h3>ローカル依存関係</h3><div id="dependencyEdges" class="dependency-list"></div><p class="muted mini" id="dependencyNote"></p></article>
       <article class="card wide"><h3>スキップ・除外したファイル</h3><ul id="projectSkippedFiles" class="ignored-files"></ul></article>
     </div>
@@ -128,7 +129,6 @@
       <article class="card wide"><h3>主要コンポーネント</h3><div id="projectComponents" class="project-files"></div></article>
       <article class="card"><h3>最初に読む順番</h3><div id="readFirst" class="symbol-list"></div></article>
       <article class="card"><h3>設定・データ・資料</h3><ul id="configDataFiles"></ul></article>
-      <article class="card"><h3>外部依存</h3><ul id="projectDependencies"></ul></article>
       <article class="card"><h3>変更時の注意</h3><ul id="projectRisks"></ul></article>
       <article class="card wide unknown-card"><h3>まだ分からないこと</h3><ul id="projectUnknowns"></ul></article>
     </div>

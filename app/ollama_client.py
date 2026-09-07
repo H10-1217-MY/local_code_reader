@@ -362,7 +362,8 @@ PROJECT_SYSTEM_PROMPT = """あなたはソフトウェアプロジェクトの�
 6. external_dependencies は project_index.external_dependencies だけを使い、SDK等を推測で追加しないでください。
 7. 個別ファイルだけで断定できないプロジェクト仕様は unknowns に分離してください。
 8. architecture_flow の各文字列には番号を付けないでください。存在しないファイル名を自由文にも書かないでください。
-9. 引き継ぎ担当者が「何のシステムか」「どこから読むか」「主要部品は何か」を短時間で把握できる日本語にしてください。
+9. 実在する識別子名に見える新しい名前（例: FileUploadAPI, ProjectManager, SomeService）を作らないでください。識別子を使う場合は project_index.paths / symbols_by_file / external_dependencies に存在する表記だけを使い、それ以外は「バックエンドAPI」「ファイル解析処理」のような一般名詞で説明してください。
+10. 引き継ぎ担当者が「何のシステムか」「どこから読むか」「主要部品は何か」を短時間で把握できる日本語にしてください。
 """
 
 

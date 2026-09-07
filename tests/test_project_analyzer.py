@@ -169,3 +169,32 @@ def test_html_reference_creates_local_dependency_edge():
     index = build_project_index(files)
     edges = {(e["source"], e["target"]) for e in index["local_dependency_edges"]}
     assert ("templates/index.html", "static/app.js") in edges
+
+
+def test_sanitize_project_files_preserves_metadata_and_adds_verified_facts():
+    files = [
+        {
+            "file": {"path": "main.py", "language": "Python", "line_count": 2, "char_count": 20},
+            "processing": {"mode": "llm"},
+            "static_analysis": {"language": "Python", "imports": ["import requests"], "functions": [{"name": "main", "qualified_name": "main"}], "classes": []},
+            "analysis": {"key_functions": [{"name": "main", "role": "entry"}], "key_classes": [], "related_files": ["config.py"], "external_dependencies": ["fake-sdk"]},
+            "model": "qwen3:14b",
+            "metrics": {"eval_count": 12},
+            "grounding": {"removed_claim_count": 1},
+        },
+        {
+            "file": {"path": "config.py", "language": "Python", "line_count": 1, "char_count": 5},
+            "processing": {"mode": "llm"},
+            "static_analysis": {"language": "Python", "imports": [], "functions": [], "classes": []},
+            "analysis": {},
+            "model": "qwen3:14b",
+        },
+    ]
+    index = build_project_index(files)
+    grounded, _ = sanitize_project_files(files, index)
+    first = grounded[0]
+    assert first["model"] == "qwen3:14b"
+    assert first["metrics"]["eval_count"] == 12
+    assert first["verified_facts"]["external_dependencies"] == ["requests"]
+    assert first["verified_facts"]["related_files"] == ["config.py"]
+    assert first["analysis"]["external_dependencies"] == ["requests"]

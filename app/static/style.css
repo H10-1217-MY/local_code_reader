@@ -113,7 +113,7 @@ button.mode-tab.active { background: white; color: #172033; box-shadow: 0 2px 8p
   .action-row button { width: 100%; }
 }
 
-/* v2.2 grounded project analysis */
+/* v2.3 grounded project analysis */
 .filter-counts { display: flex; flex-wrap: wrap; gap: 7px; margin: 8px 0 5px; }
 .filter-chip { display: inline-flex; align-items: center; padding: 4px 8px; border-radius: 999px; background: #e8edf5; font-size: 12px; font-weight: 700; }
 .filter-chip.llm { background: #e6edfb; }

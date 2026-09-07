@@ -425,6 +425,9 @@ def sanitize_project_files(files: list[dict[str, Any]], project_index: dict[str,
             "processing": dict(item.get("processing") or {}),
             "static_analysis": dict(item.get("static_analysis") or {}),
             "analysis": dict(item.get("analysis") or {}),
+            "model": item.get("model"),
+            "metrics": dict(item.get("metrics") or {}),
+            "grounding": dict(item.get("grounding") or {}),
         }
         path = str(copy["file"].get("path") or copy["file"].get("name") or "")
         static = copy["static_analysis"]
@@ -481,13 +484,20 @@ def sanitize_project_files(files: list[dict[str, Any]], project_index: dict[str,
                 removed.append({"path": path, "field": "external_dependencies", "claim": str(old)})
         analysis["external_dependencies"] = grounded_deps
 
+        # UI/JSONで「確認済み事実」とAI解釈を混同しないための明示的な静的事実ブロック。
+        copy["verified_facts"] = {
+            "external_dependencies": grounded_deps,
+            "related_files": list(dict.fromkeys(good_related)),
+            "functions": sorted({str(f.get("qualified_name") or f.get("name")) for f in (static.get("functions") or []) if f.get("qualified_name") or f.get("name")}),
+            "classes": sorted({str(c.get("qualified_name") or c.get("name")) for c in (static.get("classes") or []) if c.get("qualified_name") or c.get("name")}),
+        }
         copy["analysis"] = analysis
         sanitized.append(copy)
 
     return sanitized, {
         "removed_claim_count": len(removed),
         "removed_claims": removed[:300],
-        "note": "個別LLM解析の関数・クラス・関連ファイル・外部依存を静的情報と実在pathで照合し、未確認の主張をプロジェクト要約入力から除外しました。",
+        "note": "個別LLM解析の関数・クラス・関連ファイル・外部依存を静的情報と実在pathで照合し、未確認の主張を除外しました。v2.3ではこのgrounding済み結果を最終UI/JSONにも使用します。",
     }
 
 

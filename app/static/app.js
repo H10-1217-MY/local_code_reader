@@ -74,10 +74,10 @@ function resetChat() {
 function renderSingleResult(data) {
   lastResult = data; lastResult.qa_history = lastResult.qa_history || []; resetChat();
   byId("fileTitle").textContent = data.file.name; byId("fileMeta").textContent = `${data.file.language} / ${data.file.line_count} lines / model: ${data.model}`;
-  renderBasicFacts(data); fillList("staticImports", data.static_analysis.imports); renderStaticSymbols("staticFunctions", data.static_analysis.functions, "function"); renderStaticSymbols("staticClasses", data.static_analysis.classes, "class");
+  renderBasicFacts(data); fillList("staticImports", data.static_analysis.imports); fillList("staticDependencies", data.static_analysis.detected_external_dependencies); fillList("staticReferences", data.static_analysis.references); renderStaticSymbols("staticFunctions", data.static_analysis.functions, "function"); renderStaticSymbols("staticClasses", data.static_analysis.classes, "class");
   byId("purpose").textContent = data.analysis.purpose || ""; byId("overview").textContent = data.analysis.overview || ""; fillList("mainFlow", data.analysis.main_flow, {stripLeadingNumber: true}); fillList("changeRisks", data.analysis.change_risks);
   renderInterpretedSymbols("keyFunctions", data.analysis.key_functions, data.static_analysis.functions); renderInterpretedSymbols("keyClasses", data.analysis.key_classes, data.static_analysis.classes);
-  fillList("inputs", data.analysis.inputs); fillList("outputs", data.analysis.outputs); fillList("dependencies", data.analysis.external_dependencies); fillList("relatedFiles", data.analysis.related_files); fillList("unknowns", data.analysis.unknowns);
+  fillList("inputs", data.analysis.inputs); fillList("outputs", data.analysis.outputs); fillList("unknowns", data.analysis.unknowns);
   byId("staticJson").textContent = JSON.stringify(data.static_analysis, null, 2); byId("singleResultArea").classList.remove("hidden"); byId("projectResultArea").classList.add("hidden");
 }
 
@@ -171,7 +171,8 @@ function renderProjectPairList(id, items, keyName, valueName) {
   items.forEach(item => { const box = document.createElement("div"); box.className = "symbol"; const strong = document.createElement("strong"); strong.textContent = item[keyName] || "不明"; const p = document.createElement("p"); p.className = "symbol-meta"; p.textContent = item[valueName] || ""; box.append(strong, p); el.appendChild(box); });
 }
 function renderProjectResult(summary, fileResults, skippedFiles = [], excludedFiles = []) {
-  lastProjectResult = {...summary, files: fileResults, skipped_files: skippedFiles, excluded_files: excludedFiles}; const a = summary.analysis; const idx = summary.project_index;
+  const verifiedFiles = summary.files?.length ? summary.files : fileResults;
+  lastProjectResult = {...summary, files: verifiedFiles, skipped_files: skippedFiles, excluded_files: excludedFiles}; const a = summary.analysis; const idx = summary.project_index;
   const pc = idx.processing_counts || {}; const llmCount = pc.llm || 0; const structureCount = pc.structure || 0;
   const removedClaims = summary.grounding?.removed_claim_count || 0;
   byId("projectTitle").textContent = summary.project.name; byId("projectMeta").textContent = `${summary.project.file_count} included / LLM ${llmCount} / structure ${structureCount} / grounded ${removedClaims} claims / skipped ${skippedFiles.length} / excluded ${excludedFiles.length} / model: ${summary.model}`;
@@ -180,9 +181,9 @@ function renderProjectResult(summary, fileResults, skippedFiles = [], excludedFi
   const edges = byId("dependencyEdges"); edges.innerHTML = ""; if (!idx.local_dependency_edges?.length) edges.textContent = "プロジェクト内import/includeの直接一致は検出されませんでした。"; else idx.local_dependency_edges.forEach(e => { const row=document.createElement("div");row.className="dependency-edge";row.textContent=`${e.source} → ${e.target}`;const small=document.createElement("span");small.textContent=`根拠: ${e.evidence}`;row.appendChild(small);edges.appendChild(row); }); byId("dependencyNote").textContent = idx.note || "";
   const skipList = byId("projectSkippedFiles"); skipList.innerHTML = ""; const ignored = [...skippedFiles, ...excludedFiles]; if (!ignored.length) skipList.textContent="なし"; else ignored.slice(0,80).forEach(item => { const li=document.createElement("li"); li.textContent=`${item.path} — ${item.reason}`; skipList.appendChild(li); });
   byId("projectPurpose").textContent = a.purpose || ""; byId("projectOverview").textContent = a.overview || ""; fillList("architectureFlow", a.architecture_flow, {stripLeadingNumber:true}); renderProjectPairList("entryPoints", a.entry_points, "path", "reason"); renderProjectPairList("readFirst", a.read_first, "path", "reason");
-  fillList("configDataFiles", a.config_and_data_files); fillList("projectDependencies", a.external_dependencies); fillList("projectRisks", a.change_risks); fillList("projectUnknowns", a.unknowns);
+  fillList("configDataFiles", a.config_and_data_files); fillList("projectDependencies", idx.external_dependencies); fillList("projectRisks", a.change_risks); fillList("projectUnknowns", a.unknowns);
   renderProjectPairList("projectComponents", a.components, "path", "role");
-  const cards = byId("projectFileCards"); cards.innerHTML = ""; fileResults.forEach(item => { const card=document.createElement("details");card.className="file-card";const summaryEl=document.createElement("summary");const title=document.createElement("strong");title.textContent=item.file.path;const desc=document.createElement("span");desc.textContent=item.analysis.purpose || "";summaryEl.append(title,desc);const body=document.createElement("div");body.className="file-card-body";const overview=document.createElement("p");overview.textContent=item.analysis.overview || "";const meta=document.createElement("p");meta.className="muted mini";const mode=item.processing?.mode || "llm";meta.textContent=`${item.file.language} / ${item.file.line_count} lines / ${mode === "structure" ? "構造のみ・LLMなし" : `model: ${item.model}`}`;body.append(meta,overview);card.append(summaryEl,body);cards.appendChild(card); });
+  const cards = byId("projectFileCards"); cards.innerHTML = ""; verifiedFiles.forEach(item => { const card=document.createElement("details");card.className="file-card";const summaryEl=document.createElement("summary");const title=document.createElement("strong");title.textContent=item.file.path;const desc=document.createElement("span");desc.textContent=item.analysis.purpose || "";summaryEl.append(title,desc);const body=document.createElement("div");body.className="file-card-body";const overview=document.createElement("p");overview.textContent=item.analysis.overview || "";const meta=document.createElement("p");meta.className="muted mini";const mode=item.processing?.mode || "llm";const removed=item.grounding?.removed_claim_count || 0;meta.textContent=`${item.file.language} / ${item.file.line_count} lines / ${mode === "structure" ? "構造のみ・LLMなし" : `model: ${item.model || summary.model}`} / grounding除外 ${removed}`;const facts=document.createElement("p");facts.className="muted mini";const deps=item.verified_facts?.external_dependencies || item.analysis.external_dependencies || [];const related=item.verified_facts?.related_files || item.analysis.related_files || [];facts.textContent=`確認済み外部依存: ${deps.length ? deps.join(", ") : "なし"} / 関連ファイル: ${related.length ? related.join(", ") : "なし"}`;body.append(meta,overview,facts);card.append(summaryEl,body);cards.appendChild(card); });
   byId("projectJson").textContent = JSON.stringify(lastProjectResult, null, 2); byId("projectResultArea").classList.remove("hidden"); byId("singleResultArea").classList.add("hidden");
 }
 
@@ -192,7 +193,7 @@ byId("projectForm").addEventListener("submit", async (event) => {
   projectSkipped = classified.filter(item => item.mode === "skip").map(item => ({path:normalizedRelativePath(item.file), reason:item.reason}));
   projectExcluded = classified.filter(item => item.mode === "exclude").map(item => ({path:normalizedRelativePath(item.file), reason:item.reason}));
   if (!files.length) { showError("LLM解析または構造解析の対象になるファイルがありません。"); return; }
-  const maxFiles = appStatus?.limits?.max_project_files || 40; if (files.length > maxFiles) { showError(`解析対象が ${files.length} 件あります。v2.2の上限 ${maxFiles} 件以内のフォルダで試してください。`); return; }
+  const maxFiles = appStatus?.limits?.max_project_files || 40; if (files.length > maxFiles) { showError(`解析対象が ${files.length} 件あります。v2.3の上限 ${maxFiles} 件以内のフォルダで試してください。`); return; }
   byId("projectAnalyzeButton").disabled = true; projectFiles = []; const projectName = projectNameFromFiles(Array.from(byId("folderInput").files)); const model = byId("modelInput").value.trim();
   try {
     for (let i=0;i<files.length;i++) {
@@ -201,7 +202,7 @@ byId("projectForm").addEventListener("submit", async (event) => {
     }
     if (!projectFiles.length) { throw new Error("内容確認後、プロジェクト要約に使えるファイルがありませんでした。"); }
     setLoading(`ファイル処理完了: ${projectFiles.length} included / ${projectSkipped.length} skipped\nプロジェクト全体をOllamaで整理しています…`);
-    const res = await fetch("/api/project/summarize", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({project_name:projectName, model, files:projectFiles})}); const summary = await res.json(); if (!res.ok) throw new Error(summary.detail || "プロジェクト要約に失敗しました"); renderProjectResult(summary, projectFiles, projectSkipped, projectExcluded);
+    const res = await fetch("/api/project/summarize", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({project_name:projectName, model, files:projectFiles})}); const summary = await res.json(); if (!res.ok) throw new Error(summary.detail || "プロジェクト要約に失敗しました"); projectFiles = summary.files?.length ? summary.files : projectFiles; renderProjectResult(summary, projectFiles, projectSkipped, projectExcluded);
   } catch (error) { showError(error.message); } finally { byId("projectAnalyzeButton").disabled = false; clearLoading(); renderFolderPreview(); }
 });
 
