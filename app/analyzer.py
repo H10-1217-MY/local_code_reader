@@ -180,7 +180,7 @@ def _javascript_analysis(source: str, language: str) -> dict[str, Any]:
         "functions": functions[:250],
         "classes": classes[:120],
         "syntax_error": None,
-        "note": f"{language} はv2.3で宣言ベースの軽量解析です。メソッド呼び出しを関数定義として数えないようにしています。",
+        "note": f"{language} はv3.1で宣言ベースの軽量解析です。メソッド呼び出しを関数定義として数えないようにしています。",
     }
 
 
@@ -229,7 +229,7 @@ def _css_analysis(source: str, language: str) -> dict[str, Any]:
         "css_at_rules": list(dict.fromkeys(at_rules))[:120],
         "css_custom_properties": list(dict.fromkeys(custom_properties))[:120],
         "syntax_error": None,
-        "note": f"{language} はv2.3でCSS専用の軽量解析です。セレクタ/@規則/CSS変数を取得し、@mediaを関数として誤検出しません。",
+        "note": f"{language} はv3.1でCSS専用の軽量解析です。セレクタ/@規則/CSS変数を取得し、@mediaを関数として誤検出しません。",
     }
 
 
@@ -270,7 +270,7 @@ def _html_analysis(source: str) -> dict[str, Any]:
         "html_ids": list(dict.fromkeys(parser.ids))[:200],
         "html_classes": list(dict.fromkeys(parser.classes))[:300],
         "syntax_error": None,
-        "note": "HTML はv2.3でscript/link/img等の参照とid/classを軽量解析します。",
+        "note": "HTML はv3.1でscript/link/img等の参照とid/classを軽量解析します。",
     }
 
 
@@ -320,7 +320,7 @@ def _lightweight_analysis(source: str, language: str) -> dict[str, Any]:
         "functions": functions[:200],
         "classes": classes[:100],
         "syntax_error": None,
-        "note": f"{language} はv2.3では軽量な宣言パターン解析です。意味解析はOllamaが補完します。",
+        "note": f"{language} はv3.1では軽量な宣言パターン解析です。意味解析はOllamaが補完します。",
     }
 
 

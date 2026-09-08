@@ -5,6 +5,7 @@ let projectFiles = [];
 let projectSkipped = [];
 let projectExcluded = [];
 let lastProjectResult = null;
+let projectChatHistory = [];
 let appStatus = null;
 
 const byId = (id) => document.getElementById(id);
@@ -84,6 +85,41 @@ function renderSingleResult(data) {
 function appendChatMessage(role, text, model = "") {
   const messages = byId("chatMessages"); messages.querySelector(".chat-empty")?.remove();
   const box = document.createElement("div"); box.className = `chat-message ${role}`; const label = document.createElement("div"); label.className = "chat-label"; label.textContent = role === "user" ? "YOU" : `OLLAMA${model ? ` / ${model}` : ""}`; const body = document.createElement("div"); body.className = "chat-body"; body.textContent = text; box.append(label, body); messages.appendChild(box); messages.scrollTop = messages.scrollHeight;
+}
+
+function resetProjectChat() {
+  projectChatHistory = [];
+  if (lastProjectResult) lastProjectResult.project_qa_history = [];
+  byId("projectChatMessages").innerHTML = '<div class="chat-empty">解析済みプロジェクトについて、横断的に質問できます。</div>';
+  byId("projectAskStatus").textContent = "";
+  if (lastProjectResult) byId("projectJson").textContent = JSON.stringify(lastProjectResult, null, 2);
+}
+function appendProjectChatMessage(role, text, model = "", details = null) {
+  const messages = byId("projectChatMessages"); messages.querySelector(".chat-empty")?.remove();
+  const box = document.createElement("div"); box.className = `chat-message ${role}`;
+  const label = document.createElement("div"); label.className = "chat-label"; label.textContent = role === "user" ? "YOU" : `OLLAMA${model ? ` / ${model}` : ""}`;
+  const body = document.createElement("div"); body.className = "chat-body"; body.textContent = text; box.append(label, body);
+  if (details && role === "assistant") {
+    const meta = document.createElement("div"); meta.className = "project-qa-evidence";
+    const confidence = document.createElement("p"); confidence.className = "muted mini"; confidence.textContent = `confidence: ${details.confidence || "unknown"}`; meta.appendChild(confidence);
+    if (details.context_selection) {
+      const route = document.createElement("p"); route.className = "muted mini";
+      const selected = details.context_selection.selected_files || [];
+      route.textContent = `intent: ${details.context_selection.intent_label || details.context_selection.intent || "unknown"} / selected: ${selected.length} files / history: ${details.context_selection.history_turns_used || 0} turns`;
+      meta.appendChild(route);
+      if (selected.length) {
+        const title = document.createElement("strong"); title.textContent = "今回参照したファイル"; meta.appendChild(title);
+        const ul = document.createElement("ul"); selected.forEach(path => { const li=document.createElement("li"); li.textContent=path; ul.appendChild(li); }); meta.appendChild(ul);
+      }
+    }
+    if (details.evidence?.length) {
+      const title = document.createElement("strong"); title.textContent = "確認根拠"; meta.appendChild(title);
+      const ul = document.createElement("ul"); details.evidence.forEach(ev => { const li=document.createElement("li"); const symbol=ev.symbol ? ` / ${ev.symbol}` : ""; li.textContent=`${ev.path}${symbol}: ${ev.reason || ""}`; ul.appendChild(li); }); meta.appendChild(ul);
+    }
+    if (details.limitations?.length) { const title=document.createElement("strong"); title.textContent="この回答の限界"; meta.appendChild(title); const ul=document.createElement("ul"); details.limitations.forEach(x=>{const li=document.createElement("li");li.textContent=x;ul.appendChild(li);});meta.appendChild(ul); }
+    box.appendChild(meta);
+  }
+  messages.appendChild(box); messages.scrollTop = messages.scrollHeight;
 }
 async function fileToBase64(file) { const bytes = new Uint8Array(await file.arrayBuffer()); let binary = ""; const chunk = 0x8000; for (let i=0;i<bytes.length;i+=chunk) binary += String.fromCharCode(...bytes.subarray(i, i+chunk)); return btoa(binary); }
 
@@ -172,7 +208,7 @@ function renderProjectPairList(id, items, keyName, valueName) {
 }
 function renderProjectResult(summary, fileResults, skippedFiles = [], excludedFiles = []) {
   const verifiedFiles = summary.files?.length ? summary.files : fileResults;
-  lastProjectResult = {...summary, files: verifiedFiles, skipped_files: skippedFiles, excluded_files: excludedFiles}; const a = summary.analysis; const idx = summary.project_index;
+  lastProjectResult = {...summary, files: verifiedFiles, skipped_files: skippedFiles, excluded_files: excludedFiles, project_qa_history: []}; resetProjectChat(); const a = summary.analysis; const idx = summary.project_index;
   const pc = idx.processing_counts || {}; const llmCount = pc.llm || 0; const structureCount = pc.structure || 0;
   const removedClaims = summary.grounding?.removed_claim_count || 0;
   byId("projectTitle").textContent = summary.project.name; byId("projectMeta").textContent = `${summary.project.file_count} included / LLM ${llmCount} / structure ${structureCount} / grounded ${removedClaims} claims / skipped ${skippedFiles.length} / excluded ${excludedFiles.length} / model: ${summary.model}`;
@@ -193,7 +229,7 @@ byId("projectForm").addEventListener("submit", async (event) => {
   projectSkipped = classified.filter(item => item.mode === "skip").map(item => ({path:normalizedRelativePath(item.file), reason:item.reason}));
   projectExcluded = classified.filter(item => item.mode === "exclude").map(item => ({path:normalizedRelativePath(item.file), reason:item.reason}));
   if (!files.length) { showError("LLM解析または構造解析の対象になるファイルがありません。"); return; }
-  const maxFiles = appStatus?.limits?.max_project_files || 40; if (files.length > maxFiles) { showError(`解析対象が ${files.length} 件あります。v2.3の上限 ${maxFiles} 件以内のフォルダで試してください。`); return; }
+  const maxFiles = appStatus?.limits?.max_project_files || 40; if (files.length > maxFiles) { showError(`解析対象が ${files.length} 件あります。v3.1の上限 ${maxFiles} 件以内のフォルダで試してください。`); return; }
   byId("projectAnalyzeButton").disabled = true; projectFiles = []; const projectName = projectNameFromFiles(Array.from(byId("folderInput").files)); const model = byId("modelInput").value.trim();
   try {
     for (let i=0;i<files.length;i++) {
@@ -205,6 +241,42 @@ byId("projectForm").addEventListener("submit", async (event) => {
     const res = await fetch("/api/project/summarize", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({project_name:projectName, model, files:projectFiles})}); const summary = await res.json(); if (!res.ok) throw new Error(summary.detail || "プロジェクト要約に失敗しました"); projectFiles = summary.files?.length ? summary.files : projectFiles; renderProjectResult(summary, projectFiles, projectSkipped, projectExcluded);
   } catch (error) { showError(error.message); } finally { byId("projectAnalyzeButton").disabled = false; clearLoading(); renderFolderPreview(); }
 });
+
+byId("projectAskForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!lastProjectResult) return;
+  const question = byId("projectQuestionInput").value.trim();
+  if (!question) return;
+  const historyForRequest = projectChatHistory.slice(-8);
+  appendProjectChatMessage("user", question);
+  byId("projectQuestionInput").value = "";
+  byId("projectAskButton").disabled = true; byId("projectQuestionInput").disabled = true; byId("projectAskStatus").textContent = "質問意図を判定し、関連ファイル・会話を選定中…";
+  try {
+    const payload = {
+      project_name: lastProjectResult.project.name,
+      model: byId("modelInput").value.trim(),
+      question,
+      project_index: lastProjectResult.project_index,
+      analysis: lastProjectResult.analysis,
+      files: lastProjectResult.files,
+      history: historyForRequest,
+    };
+    const res = await fetch("/api/project/ask", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "プロジェクト質問への回答に失敗しました");
+    appendProjectChatMessage("assistant", data.answer, data.model, data);
+    projectChatHistory.push({role:"user", content:question}, {role:"assistant", content:data.answer}); projectChatHistory = projectChatHistory.slice(-8);
+    lastProjectResult.project_qa_history.push({question, answer:data.answer, evidence:data.evidence, confidence:data.confidence, limitations:data.limitations, context_selection:data.context_selection, grounding:data.grounding, model:data.model, metrics:data.metrics});
+    byId("projectJson").textContent = JSON.stringify(lastProjectResult, null, 2);
+    byId("projectAskStatus").textContent = "";
+  } catch (error) {
+    appendProjectChatMessage("assistant", `エラー: ${error.message}`); byId("projectAskStatus").textContent = "回答に失敗しました。";
+  } finally {
+    byId("projectAskButton").disabled = false; byId("projectQuestionInput").disabled = false; byId("projectQuestionInput").focus();
+  }
+});
+byId("clearProjectChatButton").addEventListener("click", resetProjectChat);
+document.querySelectorAll(".project-quick-question").forEach(button => button.addEventListener("click", () => { byId("projectQuestionInput").value = button.dataset.question || ""; byId("projectQuestionInput").focus(); }));
 
 function downloadJson(data, filename) { if (!data) return; const blob = new Blob([JSON.stringify(data, null, 2)], {type:"application/json"}); const url = URL.createObjectURL(blob); const a=document.createElement("a");a.href=url;a.download=filename;a.click();URL.revokeObjectURL(url); }
 byId("projectDownloadButton").addEventListener("click", () => downloadJson(lastProjectResult, `${lastProjectResult?.project?.name || "project"}.project-analysis.json`));

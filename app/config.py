@@ -27,7 +27,7 @@ ALLOWED_FILENAMES = {
 }
 
 # LLMに1ファイルずつ読ませなくても、プロジェクトの構成把握には役立つファイル。
-# v2.3では内容から依存名・キーなどを機械的に抽出し、LLMの依存主張も静的情報で照合する。
+# v3.1では内容から依存名・キーなどを機械的に抽出し、LLMの依存主張も静的情報で照合する。
 PROJECT_STRUCTURE_ONLY_FILENAMES = {
     "requirements.txt", "requirements-dev.txt", "requirements-test.txt",
     "pyproject.toml", "Pipfile", "Pipfile.lock", "poetry.lock", "uv.lock",

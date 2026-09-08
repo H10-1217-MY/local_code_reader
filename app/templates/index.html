@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Local Code Reader v2.3</title>
+  <title>Local Code Reader v3.1</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -12,7 +12,7 @@
     <div>
       <p class="eyebrow">LOCAL / OLLAMA</p>
       <h1>Local Code Reader</h1>
-      <p class="subtitle">1ファイル読解に加えて、プロジェクト全体を静的解析で検証しながら読む v2.3。grounding済みの結果だけを最終UI/JSONへ反映し、事実とAI解釈を分離します。</p>
+      <p class="subtitle">プロジェクト全体をgrounding付きで読み、その解析結果に対して引き継ぎ目線で質問できる v3.1。事実とAI解釈を分離したまま会話できます。</p>
     </div>
     <div id="status" class="status">Ollama確認中…</div>
   </header>
@@ -50,7 +50,7 @@
         <div id="folderPreview" class="folder-preview muted">フォルダ未選択</div>
         <div class="action-row"><button id="projectAnalyzeButton" type="submit">プロジェクトを解析</button></div>
       </form>
-      <p class="privacy">.git / .venv / node_modules / build / dist / __pycache__、空ファイル、生成物などを自動整理します。依存定義・lock・ignore系は原則LLMを使わず構造だけ保持します。v2.3は要約対象ファイル数に上限があります。</p>
+      <p class="privacy">.git / .venv / node_modules / build / dist / __pycache__、空ファイル、生成物などを自動整理します。依存定義・lock・ignore系は原則LLMを使わず構造だけ保持します。v3.1は要約対象ファイル数に上限があります。</p>
     </div>
 
     <p class="privacy">ソースコードはアプリ側のディスクへ保存しません。通信先は localhost のFastAPIとOllamaです。</p>
@@ -132,6 +132,26 @@
       <article class="card"><h3>変更時の注意</h3><ul id="projectRisks"></ul></article>
       <article class="card wide unknown-card"><h3>まだ分からないこと</h3><ul id="projectUnknowns"></ul></article>
     </div>
+
+
+
+    <section class="panel qa-panel">
+      <div class="qa-head">
+        <div><p class="eyebrow">ASK THIS PROJECT</p><h3>プロジェクト全体について質問</h3><p class="muted qa-description">質問意図を先に判定し、関連するファイルと必要な過去会話だけを選んで回答します。元ソースコードはQ&A時には再送しません。</p></div>
+        <button id="clearProjectChatButton" class="secondary compact" type="button">会話をクリア</button>
+      </div>
+      <div class="quick-questions project-quick-questions">
+        <button class="project-quick-question" type="button" data-question="このプロジェクトを初めて引き継ぐ場合、どのファイルをどの順番で読むべきですか？根拠も教えてください。">読む順番は？</button>
+        <button class="project-quick-question" type="button" data-question="Ollamaとの通信はどのファイル・関数が担当していますか？静的解析で確認できる根拠を示してください。">Ollama通信は？</button>
+        <button class="project-quick-question" type="button" data-question="main.pyを変更した場合に影響しそうなプロジェクト内ファイルを、依存関係の根拠と一緒に説明してください。">変更影響は？</button>
+        <button class="project-quick-question" type="button" data-question="このプロジェクトの処理フローを、入口からOllama解析結果の表示まで順番に説明してください。">全体フローは？</button>
+      </div>
+      <div id="projectChatMessages" class="chat-messages"><div class="chat-empty">質問ごとに参照ファイルを絞り込み、過去会話も必要な場合だけ再利用します。</div></div>
+      <form id="projectAskForm" class="ask-form">
+        <label class="field"><span>質問</span><textarea id="projectQuestionInput" rows="3" maxlength="3000" placeholder="例: Ollamaとの通信処理を変更すると、どこに影響しますか？"></textarea></label>
+        <div class="ask-actions"><span id="projectAskStatus" class="muted"></span><button id="projectAskButton" type="submit">プロジェクトに質問</button></div>
+      </form>
+    </section>
 
     <section class="panel">
       <div><p class="eyebrow">FILES</p><h3>個別ファイル解析</h3><p class="muted">各ファイルの要約はここから確認できます。</p></div>

@@ -26,6 +26,7 @@ from .config import (
 from .ollama_client import (
     analyze_project_with_ollama,
     analyze_with_ollama,
+    ask_project_with_ollama,
     ask_with_ollama,
     get_ollama_models,
 )
@@ -39,7 +40,7 @@ from .project_analyzer import (
 
 BASE_DIR = Path(__file__).resolve().parent
 
-app = FastAPI(title="Local Code Reader", version="0.2.3")
+app = FastAPI(title="Local Code Reader", version="0.3.1")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
@@ -61,6 +62,16 @@ class ProjectSummaryRequest(BaseModel):
     project_name: str = Field(min_length=1, max_length=255)
     model: str = Field(default="", max_length=200)
     files: list[dict[str, Any]] = Field(min_length=1, max_length=MAX_PROJECT_FILES)
+
+
+class ProjectAskRequest(BaseModel):
+    project_name: str = Field(min_length=1, max_length=255)
+    model: str = Field(default="", max_length=200)
+    question: str = Field(min_length=1, max_length=MAX_QUESTION_CHARS)
+    project_index: dict[str, Any]
+    analysis: dict[str, Any]
+    files: list[dict[str, Any]] = Field(min_length=1, max_length=MAX_PROJECT_FILES)
+    history: list[ChatTurn] = Field(default_factory=list, max_length=MAX_CHAT_HISTORY_MESSAGES)
 
 
 def _decode_source(content: bytes) -> str:
@@ -214,7 +225,7 @@ async def analyze_project_file(request: Request, path: str = Query(..., min_leng
 @app.post("/api/project/summarize")
 def summarize_project(payload: ProjectSummaryRequest):
     if len(payload.files) > MAX_PROJECT_FILES:
-        raise HTTPException(status_code=400, detail=f"v2.3では最大 {MAX_PROJECT_FILES} ファイルまでです。")
+        raise HTTPException(status_code=400, detail=f"v3.1では最大 {MAX_PROJECT_FILES} ファイルまでです。")
 
     compact_files: list[dict[str, Any]] = []
     for item in payload.files:
@@ -253,7 +264,7 @@ def summarize_project(payload: ProjectSummaryRequest):
         "project_index": project_index,
         "model": llm_result.get("model"),
         "analysis": grounded_project_analysis,
-        # v2.3: 最終出力/UI/JSONでも、個別ファイルはgrounding済みの結果を正とする。
+        # v3.1でも、最終出力/UI/JSONはgrounding済み個別解析を正とする。
         "files": grounded_files,
         "metrics": llm_result.get("metrics") or {},
         "grounding": {
@@ -262,6 +273,48 @@ def summarize_project(payload: ProjectSummaryRequest):
             "removed_claim_count": int(file_grounding.get("removed_claim_count") or 0) + int(project_grounding.get("removed_claim_count") or 0),
         },
     }
+
+
+@app.post("/api/project/ask")
+def ask_project(payload: ProjectAskRequest):
+    if len(payload.files) > MAX_PROJECT_FILES:
+        raise HTTPException(status_code=400, detail=f"v3.1では最大 {MAX_PROJECT_FILES} ファイルまでです。")
+
+    compact_files: list[dict[str, Any]] = []
+    for item in payload.files:
+        file_info = item.get("file") or {}
+        path = str(file_info.get("path") or "")
+        if not path:
+            raise HTTPException(status_code=400, detail="プロジェクトQ&A用データにpathがありません。")
+        _validate_project_path(path)
+        # Q&Aにも元ソースコードは渡さない。検証済み解析結果だけを再利用する。
+        compact_files.append({
+            "file": file_info,
+            "processing": item.get("processing") or {"mode": "llm", "reason": ""},
+            "static_analysis": item.get("static_analysis") or {},
+            "analysis": item.get("analysis") or {},
+            "verified_facts": item.get("verified_facts") or {},
+            "grounding": item.get("grounding") or {},
+        })
+
+    # Q&A時もクライアントから渡されたproject_indexを盲信せず、filesから再構築・再groundingする。
+    verified_index = build_project_index(compact_files)
+    grounded_files, _ = sanitize_project_files(compact_files, verified_index)
+    grounded_analysis, _ = sanitize_project_analysis(payload.analysis, verified_index)
+
+    history = [turn.model_dump() for turn in payload.history[-MAX_CHAT_HISTORY_MESSAGES:]]
+    try:
+        return ask_project_with_ollama(
+            project_name=payload.project_name.strip(),
+            project_index=verified_index,
+            project_analysis=grounded_analysis,
+            files=grounded_files,
+            question=payload.question.strip(),
+            history=history,
+            model=payload.model.strip() or None,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.post("/api/ask")

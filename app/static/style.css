@@ -122,3 +122,11 @@ button.mode-tab.active { background: white; color: #172033; box-shadow: 0 2px 8p
 .filter-chip.exclude { background: #f2e7e7; }
 .preview-meta { display: block; font-size: 12px; margin-top: 4px; }
 .ignored-files { max-height: 220px; overflow: auto; }
+
+
+/* v3.1 routed project-wide Q&A */
+.project-quick-questions { margin-bottom: 12px; }
+button.project-quick-question { border: 1px solid #cbd5e1; background: #fff; color: #22304a; padding: 8px 12px; border-radius: 999px; cursor: pointer; }
+button.project-quick-question:hover { background: #f5f7fb; }
+.project-qa-evidence { margin-top: 10px; padding-top: 10px; border-top: 1px solid #dfe5ee; }
+.project-qa-evidence ul { margin-top: 6px; }
