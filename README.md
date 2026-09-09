@@ -1,6 +1,71 @@
-# Local Code Reader v3.1
+# Local Code Reader v3.3
 
 ローカルOllamaを使い、機密ソースコードを外部LLMへ送らずに読むためのコード理解・引き継ぎ支援ツールです。
+
+
+v3.3では、v3.2の **Fact-grounded Answer Builder** に **Semantic Grounding** と **Intent-specific Answer Templates** を追加しました。AIによる短い結論と補足解釈の両方に `support_fact_ids` を必須化し、根拠のない意味解釈を採用しません。また、引き継ぎ順・依存関係・言語別ファイル説明などは、質問タイプごとにサーバー側で回答構造を組み立てます。
+
+## v3.3: Semantic Grounding + Intent Templates
+
+```text
+現在の質問
+   ↓
+Context Router
+   ↓
+関連ファイル選定
+   ↓
+static_analysis / verified_facts
+   ↓
+Fact Catalog + 静的構造からの役割推定
+   ↓
+Ollama: fact_id + support_fact_ids を選択
+   ↓
+未確認の具体名・意味上の飛躍を除外
+   ↓
+質問タイプ別テンプレートで最終回答を構成
+```
+
+主な変更点:
+
+- `summary` と `interpretations` を `{text, support_fact_ids}` 形式に変更し、根拠factがないAI結論・解釈は除外
+- `.env` など、選定済み事実にない具体的な設定ファイル名を意味解釈から除外
+- Python静的解析でトップレベル定義名、環境変数名、関数デコレータを追加抽出
+- FastAPI風デコレータからAPIルートを静的fact化し、存在しないAPIパスのAI補足を除外
+- Fact Catalogに関数内呼び出し候補、デコレータ、APIルート、環境変数名、トップレベル定義を追加
+- full Fact Catalogはサーバー側で全件保持し、Ollamaへ渡す候補だけ最大180件へrank。巨大な1ファイルが後続ファイルのfactを押し出す問題を回避
+- ファイル名・import・確認済みシンボルから `derived_role` を生成し、役割説明の骨格を静的情報側へ移動
+- 「5つのPythonファイル」のような質問では各ファイルの役割と代表シンボルを定型表示
+- 「引き継ぎ時の読む順番」では、小規模プロジェクトなら全ファイルを対象に、入口候補→設定→解析→クライアント→プロジェクト処理→UIの順を依存グラフからbest-effortで構成
+- 依存関係・変更影響・処理フローでは、LLM自由文より静的依存エッジや確認済み関数を優先
+
+`grounding.semantic_grounding` には、採用されたsummaryの根拠factと、採用されたAI解釈・各 `support_fact_ids` が保存されます。
+
+
+v3.2では、v3.1の **Q&A Context Router** に **Answer Grounding** を追加しました。質問に関連するファイルを選んだあと、静的解析とverified_factsからサーバー側で `fact_catalog` を作り、Ollamaには回答に使う `fact_id` を選ばせます。最終回答とevidenceはそのfactから再構成するため、LLMが存在しない関数名やクラス名を本文へ混ぜる問題を抑えます。
+
+## v3.2: Fact-grounded Answer Builder
+
+```text
+現在の質問
+   ↓
+v3.1 Context Router
+   ↓
+関連ファイルを選定
+   ↓
+static_analysis / verified_facts
+   ↓
+fact_catalogを機械生成
+   ↓
+Ollamaはfact_idを選択 + 短い解釈
+   ↓
+fact_idを再照合
+   ↓
+最終回答 / evidenceをサーバー側で再構成
+```
+
+たとえばLLMが `ProjectIndex` や `analyze_files()` のような未確認名称を書いても、fact_catalogに存在しない名称は回答本文から除外されます。反対に、`analyze_with_ollama` や `ask_project_with_ollama` のように静的解析で存在確認できたシンボルは、行番号付きfactとして回答根拠に利用できます。
+
+Q&A結果には `fact_ids` と `grounding.selected_fact_count` が残るため、「何を根拠に答えたか」を後から追跡できます。
 
 
 v3.1では、v3.0のプロジェクトQ&Aに **質問意図判定・関連ファイル選定・関連会話選定** を追加しました。
@@ -202,7 +267,7 @@ HTMLから次のローカル参照候補を取得します。
 ## セットアップ
 
 ```bash
-cd local_code_reader_v3_1
+cd local_code_reader_v3_3
 ./setup.sh
 ./run.sh
 ```
@@ -241,7 +306,7 @@ JSON保存にも元ソースコードは含みません。
 
 ただし、OS・ブラウザ・プロキシ・Ollamaの設定やログなど別レイヤーまで含めた痕跡ゼロを保証するものではありません。機密用途では `127.0.0.1` のまま外部公開せず運用してください。
 
-## v3.1時点の制限
+## v3.3時点の制限
 
 - PythonはASTで詳細解析しますが、JavaScript/TypeScript/CSS/HTML等は依然として軽量解析です。
 - JavaScriptのclass methodや動的importなど、すべての構文を完全には追跡しません。
@@ -255,4 +320,4 @@ JSON保存にも元ソースコードは含みません。
 python -m pytest -q
 ```
 
-v3.1では、これらに加えて質問意図判定、指定言語ファイル全件選定、変更影響時の依存隣接選定、独立質問で過去会話を混ぜないこと、長い過去コードを再送しないことをテストします。
+v3.3では、これらに加えて意味解釈のsupport_fact_ids検証、未確認`.env`主張の除外、Python環境変数名/トップレベル定義/デコレータ抽出、引き継ぎ順テンプレート、言語別ファイル説明テンプレートをテストします。

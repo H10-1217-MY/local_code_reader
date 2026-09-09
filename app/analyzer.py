@@ -51,6 +51,8 @@ def _python_analysis(source: str) -> dict[str, Any]:
         "imports": [],
         "functions": [],
         "classes": [],
+        "top_level_assignments": [],
+        "environment_variables": [],
         "syntax_error": None,
     }
     try:
@@ -111,6 +113,7 @@ def _python_analysis(source: str) -> dict[str, Any]:
                 "keyword_only_args": keyword_only_args,
                 "docstring": ast.get_docstring(node),
                 "calls": sorted(set(calls))[:50],
+                "decorators": [ast.unparse(dec) for dec in node.decorator_list],
             })
             self.generic_visit(node)
 
@@ -122,9 +125,31 @@ def _python_analysis(source: str) -> dict[str, Any]:
 
     Visitor().visit(tree)
 
+    top_level_assignments: list[str] = []
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    top_level_assignments.append(target.id)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            top_level_assignments.append(node.target.id)
+
+    environment_variables: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            name = _call_name(node.func)
+            if name in {"os.getenv", "os.environ.get"} and node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                environment_variables.append(node.args[0].value)
+        elif isinstance(node, ast.Subscript) and _call_name(node.value) == "os.environ":
+            slice_node = node.slice
+            if isinstance(slice_node, ast.Constant) and isinstance(slice_node.value, str):
+                environment_variables.append(slice_node.value)
+
     result["imports"] = sorted(set(imports))
     result["functions"] = sorted(functions, key=lambda x: x["line"])
     result["classes"] = sorted(classes, key=lambda x: x["line"])
+    result["top_level_assignments"] = list(dict.fromkeys(top_level_assignments))[:200]
+    result["environment_variables"] = list(dict.fromkeys(environment_variables))[:100]
     return result
 
 
@@ -270,7 +295,7 @@ def _html_analysis(source: str) -> dict[str, Any]:
         "html_ids": list(dict.fromkeys(parser.ids))[:200],
         "html_classes": list(dict.fromkeys(parser.classes))[:300],
         "syntax_error": None,
-        "note": "HTML はv3.1でscript/link/img等の参照とid/classを軽量解析します。",
+        "note": "HTML はv3.3でscript/link/img等の参照とid/classを軽量解析します。",
     }
 
 

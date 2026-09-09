@@ -105,7 +105,10 @@ function appendProjectChatMessage(role, text, model = "", details = null) {
     if (details.context_selection) {
       const route = document.createElement("p"); route.className = "muted mini";
       const selected = details.context_selection.selected_files || [];
-      route.textContent = `intent: ${details.context_selection.intent_label || details.context_selection.intent || "unknown"} / selected: ${selected.length} files / history: ${details.context_selection.history_turns_used || 0} turns`;
+      const factCount = details.grounding?.selected_fact_count ?? details.fact_ids?.length ?? 0;
+      const semanticInfo = details.grounding?.semantic_grounding || {};
+      const semanticCount = (semanticInfo.accepted_interpretation_count ?? 0) + ((semanticInfo.accepted_summary_support_fact_ids?.length || 0) ? 1 : 0);
+      route.textContent = `intent: ${details.context_selection.intent_label || details.context_selection.intent || "unknown"} / selected: ${selected.length} files / history: ${details.context_selection.history_turns_used || 0} turns / grounded facts: ${factCount} / supported AI notes: ${semanticCount}`;
       meta.appendChild(route);
       if (selected.length) {
         const title = document.createElement("strong"); title.textContent = "今回参照したファイル"; meta.appendChild(title);
@@ -229,7 +232,7 @@ byId("projectForm").addEventListener("submit", async (event) => {
   projectSkipped = classified.filter(item => item.mode === "skip").map(item => ({path:normalizedRelativePath(item.file), reason:item.reason}));
   projectExcluded = classified.filter(item => item.mode === "exclude").map(item => ({path:normalizedRelativePath(item.file), reason:item.reason}));
   if (!files.length) { showError("LLM解析または構造解析の対象になるファイルがありません。"); return; }
-  const maxFiles = appStatus?.limits?.max_project_files || 40; if (files.length > maxFiles) { showError(`解析対象が ${files.length} 件あります。v3.1の上限 ${maxFiles} 件以内のフォルダで試してください。`); return; }
+  const maxFiles = appStatus?.limits?.max_project_files || 40; if (files.length > maxFiles) { showError(`解析対象が ${files.length} 件あります。v3.3の上限 ${maxFiles} 件以内のフォルダで試してください。`); return; }
   byId("projectAnalyzeButton").disabled = true; projectFiles = []; const projectName = projectNameFromFiles(Array.from(byId("folderInput").files)); const model = byId("modelInput").value.trim();
   try {
     for (let i=0;i<files.length;i++) {
@@ -250,7 +253,7 @@ byId("projectAskForm").addEventListener("submit", async (event) => {
   const historyForRequest = projectChatHistory.slice(-8);
   appendProjectChatMessage("user", question);
   byId("projectQuestionInput").value = "";
-  byId("projectAskButton").disabled = true; byId("projectQuestionInput").disabled = true; byId("projectAskStatus").textContent = "質問意図を判定し、関連ファイル・会話を選定中…";
+  byId("projectAskButton").disabled = true; byId("projectQuestionInput").disabled = true; byId("projectAskStatus").textContent = "質問意図と関連ファイルを選定し、fact + 意味解釈の根拠をgrounding中…";
   try {
     const payload = {
       project_name: lastProjectResult.project.name,
@@ -266,7 +269,7 @@ byId("projectAskForm").addEventListener("submit", async (event) => {
     if (!res.ok) throw new Error(data.detail || "プロジェクト質問への回答に失敗しました");
     appendProjectChatMessage("assistant", data.answer, data.model, data);
     projectChatHistory.push({role:"user", content:question}, {role:"assistant", content:data.answer}); projectChatHistory = projectChatHistory.slice(-8);
-    lastProjectResult.project_qa_history.push({question, answer:data.answer, evidence:data.evidence, confidence:data.confidence, limitations:data.limitations, context_selection:data.context_selection, grounding:data.grounding, model:data.model, metrics:data.metrics});
+    lastProjectResult.project_qa_history.push({question, answer:data.answer, evidence:data.evidence, fact_ids:data.fact_ids, confidence:data.confidence, limitations:data.limitations, context_selection:data.context_selection, grounding:data.grounding, model:data.model, metrics:data.metrics});
     byId("projectJson").textContent = JSON.stringify(lastProjectResult, null, 2);
     byId("projectAskStatus").textContent = "";
   } catch (error) {

@@ -66,3 +66,13 @@ def test_html_local_references_are_collected():
     result = analyze_source("templates/index.html", source)
     assert "/static/style.css" in result["references"]
     assert "/static/app.js" in result["references"]
+
+
+def test_python_static_analysis_collects_env_keys_top_level_assignments_and_decorators():
+    source = '''import os\n\nOLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")\nMAX_FILES = 40\n\n@app.get("/api/status")\ndef status():\n    return {"ok": True}\n'''
+    result = analyze_source("app/config_like.py", source)
+    assert "OLLAMA_BASE_URL" in result["top_level_assignments"]
+    assert "MAX_FILES" in result["top_level_assignments"]
+    assert result["environment_variables"] == ["OLLAMA_BASE_URL"]
+    status = next(f for f in result["functions"] if f["name"] == "status")
+    assert "app.get('/api/status')" in status["decorators"]

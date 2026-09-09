@@ -40,7 +40,7 @@ from .project_analyzer import (
 
 BASE_DIR = Path(__file__).resolve().parent
 
-app = FastAPI(title="Local Code Reader", version="0.3.1")
+app = FastAPI(title="Local Code Reader", version="0.3.3")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
@@ -225,7 +225,7 @@ async def analyze_project_file(request: Request, path: str = Query(..., min_leng
 @app.post("/api/project/summarize")
 def summarize_project(payload: ProjectSummaryRequest):
     if len(payload.files) > MAX_PROJECT_FILES:
-        raise HTTPException(status_code=400, detail=f"v3.1では最大 {MAX_PROJECT_FILES} ファイルまでです。")
+        raise HTTPException(status_code=400, detail=f"v3.3では最大 {MAX_PROJECT_FILES} ファイルまでです。")
 
     compact_files: list[dict[str, Any]] = []
     for item in payload.files:
@@ -264,7 +264,7 @@ def summarize_project(payload: ProjectSummaryRequest):
         "project_index": project_index,
         "model": llm_result.get("model"),
         "analysis": grounded_project_analysis,
-        # v3.1でも、最終出力/UI/JSONはgrounding済み個別解析を正とする。
+        # v3.3でも、最終出力/UI/JSONはgrounding済み個別解析を正とする。
         "files": grounded_files,
         "metrics": llm_result.get("metrics") or {},
         "grounding": {
@@ -278,7 +278,7 @@ def summarize_project(payload: ProjectSummaryRequest):
 @app.post("/api/project/ask")
 def ask_project(payload: ProjectAskRequest):
     if len(payload.files) > MAX_PROJECT_FILES:
-        raise HTTPException(status_code=400, detail=f"v3.1では最大 {MAX_PROJECT_FILES} ファイルまでです。")
+        raise HTTPException(status_code=400, detail=f"v3.3では最大 {MAX_PROJECT_FILES} ファイルまでです。")
 
     compact_files: list[dict[str, Any]] = []
     for item in payload.files:
