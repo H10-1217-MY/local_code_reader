@@ -5,6 +5,7 @@ let projectFiles = [];
 let projectSkipped = [];
 let projectExcluded = [];
 let lastProjectResult = null;
+let lastProjectDocs = null;
 let projectChatHistory = [];
 let appStatus = null;
 
@@ -211,7 +212,7 @@ function renderProjectPairList(id, items, keyName, valueName) {
 }
 function renderProjectResult(summary, fileResults, skippedFiles = [], excludedFiles = []) {
   const verifiedFiles = summary.files?.length ? summary.files : fileResults;
-  lastProjectResult = {...summary, files: verifiedFiles, skipped_files: skippedFiles, excluded_files: excludedFiles, project_qa_history: []}; resetProjectChat(); const a = summary.analysis; const idx = summary.project_index;
+  lastProjectResult = {...summary, files: verifiedFiles, skipped_files: skippedFiles, excluded_files: excludedFiles, project_qa_history: []}; lastProjectDocs = null; byId("projectDocsArea").classList.add("hidden"); byId("projectDocsList").innerHTML = ""; resetProjectChat(); const a = summary.analysis; const idx = summary.project_index;
   const pc = idx.processing_counts || {}; const llmCount = pc.llm || 0; const structureCount = pc.structure || 0;
   const removedClaims = summary.grounding?.removed_claim_count || 0;
   byId("projectTitle").textContent = summary.project.name; byId("projectMeta").textContent = `${summary.project.file_count} included / LLM ${llmCount} / structure ${structureCount} / grounded ${removedClaims} claims / skipped ${skippedFiles.length} / excluded ${excludedFiles.length} / model: ${summary.model}`;
@@ -232,7 +233,7 @@ byId("projectForm").addEventListener("submit", async (event) => {
   projectSkipped = classified.filter(item => item.mode === "skip").map(item => ({path:normalizedRelativePath(item.file), reason:item.reason}));
   projectExcluded = classified.filter(item => item.mode === "exclude").map(item => ({path:normalizedRelativePath(item.file), reason:item.reason}));
   if (!files.length) { showError("LLM解析または構造解析の対象になるファイルがありません。"); return; }
-  const maxFiles = appStatus?.limits?.max_project_files || 40; if (files.length > maxFiles) { showError(`解析対象が ${files.length} 件あります。v3.3の上限 ${maxFiles} 件以内のフォルダで試してください。`); return; }
+  const maxFiles = appStatus?.limits?.max_project_files || 40; if (files.length > maxFiles) { showError(`解析対象が ${files.length} 件あります。v3.4の上限 ${maxFiles} 件以内のフォルダで試してください。`); return; }
   byId("projectAnalyzeButton").disabled = true; projectFiles = []; const projectName = projectNameFromFiles(Array.from(byId("folderInput").files)); const model = byId("modelInput").value.trim();
   try {
     for (let i=0;i<files.length;i++) {
@@ -281,7 +282,70 @@ byId("projectAskForm").addEventListener("submit", async (event) => {
 byId("clearProjectChatButton").addEventListener("click", resetProjectChat);
 document.querySelectorAll(".project-quick-question").forEach(button => button.addEventListener("click", () => { byId("projectQuestionInput").value = button.dataset.question || ""; byId("projectQuestionInput").focus(); }));
 
+
+function downloadText(content, filename, type = "text/markdown;charset=utf-8") {
+  const blob = new Blob([content || ""], {type});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function renderProjectDocs(data) {
+  lastProjectDocs = data;
+  const area = byId("projectDocsArea");
+  const list = byId("projectDocsList");
+  list.innerHTML = "";
+  const meta = data.generation || {};
+  byId("projectDocsMeta").textContent = `${data.documents?.length || 0} files / source: ${meta.source || "grounded_project_analysis"} / source code embedded: ${meta.source_code_embedded ? "yes" : "no"} / extra Ollama call: ${meta.extra_ollama_call ? "yes" : "no"}`;
+  (data.documents || []).forEach((doc, index) => {
+    const details = document.createElement("details");
+    details.className = "file-card project-doc-card";
+    if (index === 0) details.open = true;
+    const summary = document.createElement("summary");
+    const title = document.createElement("strong"); title.textContent = doc.filename;
+    const desc = document.createElement("span"); desc.textContent = doc.description || "";
+    summary.append(title, desc);
+    const body = document.createElement("div"); body.className = "file-card-body";
+    const actions = document.createElement("div"); actions.className = "doc-actions";
+    const save = document.createElement("button"); save.type = "button"; save.className = "secondary compact"; save.textContent = `${doc.filename} 保存`;
+    save.addEventListener("click", () => downloadText(doc.content, doc.filename));
+    actions.appendChild(save);
+    const pre = document.createElement("pre"); pre.className = "doc-preview"; pre.textContent = doc.content || "";
+    body.append(actions, pre); details.append(summary, body); list.appendChild(details);
+  });
+  area.classList.remove("hidden");
+  area.scrollIntoView({behavior:"smooth", block:"start"});
+}
+
+async function generateProjectDocs() {
+  if (!lastProjectResult) return;
+  clearError();
+  const button = byId("projectDocsButton");
+  const regen = byId("regenerateProjectDocsButton");
+  button.disabled = true; regen.disabled = true;
+  setLoading("grounding済み解析結果から README / ARCHITECTURE / HANDOVER を生成しています…");
+  try {
+    const payload = {
+      project_name: lastProjectResult.project.name,
+      project_index: lastProjectResult.project_index,
+      analysis: lastProjectResult.analysis,
+      files: lastProjectResult.files,
+    };
+    const res = await fetch("/api/project/generate-docs", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "引き継ぎ資料の生成に失敗しました");
+    renderProjectDocs(data);
+  } catch (error) {
+    showError(error.message);
+  } finally {
+    button.disabled = false; regen.disabled = false; clearLoading();
+  }
+}
+
 function downloadJson(data, filename) { if (!data) return; const blob = new Blob([JSON.stringify(data, null, 2)], {type:"application/json"}); const url = URL.createObjectURL(blob); const a=document.createElement("a");a.href=url;a.download=filename;a.click();URL.revokeObjectURL(url); }
+byId("projectDocsButton").addEventListener("click", generateProjectDocs);
+byId("regenerateProjectDocsButton").addEventListener("click", generateProjectDocs);
 byId("projectDownloadButton").addEventListener("click", () => downloadJson(lastProjectResult, `${lastProjectResult?.project?.name || "project"}.project-analysis.json`));
 
 loadStatus();

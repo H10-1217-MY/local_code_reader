@@ -30,6 +30,7 @@ from .ollama_client import (
     ask_with_ollama,
     get_ollama_models,
 )
+from .project_docs import generate_project_documents
 from .project_analyzer import (
     build_project_index,
     build_structure_only_analysis,
@@ -40,7 +41,7 @@ from .project_analyzer import (
 
 BASE_DIR = Path(__file__).resolve().parent
 
-app = FastAPI(title="Local Code Reader", version="0.3.3")
+app = FastAPI(title="Local Code Reader", version="0.3.4")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
@@ -61,6 +62,13 @@ class AskRequest(BaseModel):
 class ProjectSummaryRequest(BaseModel):
     project_name: str = Field(min_length=1, max_length=255)
     model: str = Field(default="", max_length=200)
+    files: list[dict[str, Any]] = Field(min_length=1, max_length=MAX_PROJECT_FILES)
+
+
+class ProjectDocsRequest(BaseModel):
+    project_name: str = Field(min_length=1, max_length=255)
+    project_index: dict[str, Any]
+    analysis: dict[str, Any]
     files: list[dict[str, Any]] = Field(min_length=1, max_length=MAX_PROJECT_FILES)
 
 
@@ -225,7 +233,7 @@ async def analyze_project_file(request: Request, path: str = Query(..., min_leng
 @app.post("/api/project/summarize")
 def summarize_project(payload: ProjectSummaryRequest):
     if len(payload.files) > MAX_PROJECT_FILES:
-        raise HTTPException(status_code=400, detail=f"v3.3では最大 {MAX_PROJECT_FILES} ファイルまでです。")
+        raise HTTPException(status_code=400, detail=f"v3.4では最大 {MAX_PROJECT_FILES} ファイルまでです。")
 
     compact_files: list[dict[str, Any]] = []
     for item in payload.files:
@@ -264,7 +272,7 @@ def summarize_project(payload: ProjectSummaryRequest):
         "project_index": project_index,
         "model": llm_result.get("model"),
         "analysis": grounded_project_analysis,
-        # v3.3でも、最終出力/UI/JSONはgrounding済み個別解析を正とする。
+        # v3.4でも、最終出力/UI/JSONはgrounding済み個別解析を正とする。
         "files": grounded_files,
         "metrics": llm_result.get("metrics") or {},
         "grounding": {
@@ -275,10 +283,49 @@ def summarize_project(payload: ProjectSummaryRequest):
     }
 
 
+@app.post("/api/project/generate-docs")
+def generate_project_docs(payload: ProjectDocsRequest):
+    if len(payload.files) > MAX_PROJECT_FILES:
+        raise HTTPException(status_code=400, detail=f"v3.4では最大 {MAX_PROJECT_FILES} ファイルまでです。")
+
+    compact_files: list[dict[str, Any]] = []
+    for item in payload.files:
+        file_info = item.get("file") or {}
+        path = str(file_info.get("path") or "")
+        if not path:
+            raise HTTPException(status_code=400, detail="資料生成用データにpathがありません。")
+        _validate_project_path(path)
+        # 資料生成にも元ソース本文は渡さない。解析済み・検証済み情報だけを使う。
+        compact_files.append({
+            "file": file_info,
+            "processing": item.get("processing") or {"mode": "llm", "reason": ""},
+            "static_analysis": item.get("static_analysis") or {},
+            "analysis": item.get("analysis") or {},
+            "verified_facts": item.get("verified_facts") or {},
+            "grounding": item.get("grounding") or {},
+        })
+
+    verified_index = build_project_index(compact_files)
+    grounded_files, file_grounding = sanitize_project_files(compact_files, verified_index)
+    grounded_analysis, project_grounding = sanitize_project_analysis(payload.analysis, verified_index)
+    result = generate_project_documents(
+        project_name=payload.project_name.strip(),
+        project_index=verified_index,
+        project_analysis=grounded_analysis,
+        files=grounded_files,
+    )
+    result["grounding"] = {
+        "file_analysis": file_grounding,
+        "project_analysis": project_grounding,
+        "removed_claim_count": int(file_grounding.get("removed_claim_count") or 0) + int(project_grounding.get("removed_claim_count") or 0),
+    }
+    return result
+
+
 @app.post("/api/project/ask")
 def ask_project(payload: ProjectAskRequest):
     if len(payload.files) > MAX_PROJECT_FILES:
-        raise HTTPException(status_code=400, detail=f"v3.3では最大 {MAX_PROJECT_FILES} ファイルまでです。")
+        raise HTTPException(status_code=400, detail=f"v3.4では最大 {MAX_PROJECT_FILES} ファイルまでです。")
 
     compact_files: list[dict[str, Any]] = []
     for item in payload.files:

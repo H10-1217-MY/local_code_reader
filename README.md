@@ -1,6 +1,32 @@
-# Local Code Reader v3.3
+# Local Code Reader v3.4
 
 ローカルOllamaを使い、機密ソースコードを外部LLMへ送らずに読むためのコード理解・引き継ぎ支援ツールです。
+
+
+v3.4では、grounding済みのプロジェクト解析結果から **README.md / ARCHITECTURE.md / HANDOVER.md** を自動生成する引き継ぎ資料機能を追加しました。資料生成時に元ソースコード本文は再送せず、追加のOllama呼び出しも行いません。静的解析を文書の骨格にし、既存のgrounding済みAI解釈を補助的に利用します。
+
+## v3.4: Grounded Handover Documents
+
+```text
+プロジェクト解析
+   ↓
+grounding済み files / project_index / analysis
+   ↓
+資料生成専用テンプレート
+   ├→ README.md
+   ├→ ARCHITECTURE.md
+   └→ HANDOVER.md
+```
+
+- `README.md`: プロジェクト概要、構成、各ファイルの静的役割、外部依存、入口候補
+- `ARCHITECTURE.md`: ローカル依存グラフ、静的APIルート、環境変数名、トップレベル定義、処理フロー
+- `HANDOVER.md`: best-effortの読む順番、変更前に見る依存関係、API/設定、変更リスク、未確認事項、引き継ぎチェックリスト
+- Markdown内に元ソースコード本文は埋め込まない
+- 環境変数は値ではなく名前だけを資料化
+- 起動コマンドは解析結果に根拠がない限り推測しない
+- 目的・概要・変更リスクなどAI解釈を含む箇所は文書冒頭で明示
+
+ブラウザのプロジェクト解析結果から **「引き継ぎ資料を生成」** を押すと3文書をプレビューでき、それぞれMarkdownとして保存できます。
 
 
 v3.3では、v3.2の **Fact-grounded Answer Builder** に **Semantic Grounding** と **Intent-specific Answer Templates** を追加しました。AIによる短い結論と補足解釈の両方に `support_fact_ids` を必須化し、根拠のない意味解釈を採用しません。また、引き継ぎ順・依存関係・言語別ファイル説明などは、質問タイプごとにサーバー側で回答構造を組み立てます。
@@ -267,7 +293,7 @@ HTMLから次のローカル参照候補を取得します。
 ## セットアップ
 
 ```bash
-cd local_code_reader_v3_3
+cd local_code_reader_v3_4
 ./setup.sh
 ./run.sh
 ```
@@ -306,7 +332,7 @@ JSON保存にも元ソースコードは含みません。
 
 ただし、OS・ブラウザ・プロキシ・Ollamaの設定やログなど別レイヤーまで含めた痕跡ゼロを保証するものではありません。機密用途では `127.0.0.1` のまま外部公開せず運用してください。
 
-## v3.3時点の制限
+## v3.4時点の制限
 
 - PythonはASTで詳細解析しますが、JavaScript/TypeScript/CSS/HTML等は依然として軽量解析です。
 - JavaScriptのclass methodや動的importなど、すべての構文を完全には追跡しません。
@@ -320,4 +346,4 @@ JSON保存にも元ソースコードは含みません。
 python -m pytest -q
 ```
 
-v3.3では、これらに加えて意味解釈のsupport_fact_ids検証、未確認`.env`主張の除外、Python環境変数名/トップレベル定義/デコレータ抽出、引き継ぎ順テンプレート、言語別ファイル説明テンプレートをテストします。
+v3.4では、これらに加えて引き継ぎ資料3種の生成、静的APIルート・環境変数名の資料反映、元ソース本文を資料へ混入させないこと、存在しないpathを再groundingして除外することをテストします。

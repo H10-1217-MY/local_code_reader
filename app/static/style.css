@@ -130,3 +130,34 @@ button.project-quick-question { border: 1px solid #cbd5e1; background: #fff; col
 button.project-quick-question:hover { background: #f5f7fb; }
 .project-qa-evidence { margin-top: 10px; padding-top: 10px; border-top: 1px solid #dfe5ee; }
 .project-qa-evidence ul { margin-top: 6px; }
+
+.result-actions,
+.doc-actions {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.project-docs {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.project-doc-card summary {
+  cursor: pointer;
+}
+
+.doc-actions {
+  justify-content: flex-end;
+  margin-bottom: 0.75rem;
+}
+
+.doc-preview {
+  max-height: 32rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0;
+}

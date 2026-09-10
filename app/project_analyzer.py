@@ -497,7 +497,7 @@ def sanitize_project_files(files: list[dict[str, Any]], project_index: dict[str,
     return sanitized, {
         "removed_claim_count": len(removed),
         "removed_claims": removed[:300],
-        "note": "個別LLM解析の関数・クラス・関連ファイル・外部依存を静的情報と実在pathで照合し、未確認の主張を除外しました。v3.3でもこのgrounding済み結果を最終UI/JSONに使用します。",
+        "note": "個別LLM解析の関数・クラス・関連ファイル・外部依存を静的情報と実在pathで照合し、未確認の主張を除外しました。v3.4でもこのgrounding済み結果を最終UI/JSONに使用します。",
     }
 
 

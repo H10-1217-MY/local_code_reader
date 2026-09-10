@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Local Code Reader v3.3</title>
+  <title>Local Code Reader v3.4</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -12,7 +12,7 @@
     <div>
       <p class="eyebrow">LOCAL / OLLAMA</p>
       <h1>Local Code Reader</h1>
-      <p class="subtitle">プロジェクト全体をgrounding付きで読み、確認済みfactに加えてAI解釈にも根拠factを要求する v3.3。質問タイプ別テンプレートで、役割説明・依存関係・引き継ぎ順をより具体的に返します。</p>
+      <p class="subtitle">プロジェクト全体をgrounding付きで読み、質問に答え、README / ARCHITECTURE / HANDOVER を解析済み情報から生成する v3.4。資料生成時は元ソース本文を再送せず、追加のLLM呼び出しも行いません。</p>
     </div>
     <div id="status" class="status">Ollama確認中…</div>
   </header>
@@ -50,7 +50,7 @@
         <div id="folderPreview" class="folder-preview muted">フォルダ未選択</div>
         <div class="action-row"><button id="projectAnalyzeButton" type="submit">プロジェクトを解析</button></div>
       </form>
-      <p class="privacy">.git / .venv / node_modules / build / dist / __pycache__、空ファイル、生成物などを自動整理します。依存定義・lock・ignore系は原則LLMを使わず構造だけ保持します。v3.3は要約対象ファイル数に上限があります。</p>
+      <p class="privacy">.git / .venv / node_modules / build / dist / __pycache__、空ファイル、生成物などを自動整理します。依存定義・lock・ignore系は原則LLMを使わず構造だけ保持します。v3.4は要約対象ファイル数に上限があります。</p>
     </div>
 
     <p class="privacy">ソースコードはアプリ側のディスクへ保存しません。通信先は localhost のFastAPIとOllamaです。</p>
@@ -109,7 +109,7 @@
   <section id="projectResultArea" class="hidden">
     <div class="result-head">
       <div><p class="eyebrow">PROJECT RESULT</p><h2 id="projectTitle">プロジェクト解析</h2><p id="projectMeta" class="muted"></p></div>
-      <button id="projectDownloadButton" class="secondary" type="button">JSON保存</button>
+      <div class="result-actions"><button id="projectDocsButton" type="button">引き継ぎ資料を生成</button><button id="projectDownloadButton" class="secondary" type="button">JSON保存</button></div>
     </div>
 
     <div class="section-label"><span class="badge fact">プロジェクト静的情報</span><span>ファイル数・言語・import/includeの照合結果です。</span></div>
@@ -151,6 +151,15 @@
         <label class="field"><span>質問</span><textarea id="projectQuestionInput" rows="3" maxlength="3000" placeholder="例: Ollamaとの通信処理を変更すると、どこに影響しますか？"></textarea></label>
         <div class="ask-actions"><span id="projectAskStatus" class="muted"></span><button id="projectAskButton" type="submit">プロジェクトに質問</button></div>
       </form>
+    </section>
+
+    <section id="projectDocsArea" class="panel hidden">
+      <div class="qa-head">
+        <div><p class="eyebrow">GENERATED HANDOVER DOCS</p><h3>引き継ぎ資料</h3><p id="projectDocsMeta" class="muted qa-description"></p></div>
+        <button id="regenerateProjectDocsButton" class="secondary compact" type="button">再生成</button>
+      </div>
+      <p class="privacy">README.md / ARCHITECTURE.md / HANDOVER.md を、grounding済み解析結果から生成します。資料本文に元ソースコードは埋め込みません。</p>
+      <div id="projectDocsList" class="project-docs"></div>
     </section>
 
     <section class="panel">
