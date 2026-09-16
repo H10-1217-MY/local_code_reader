@@ -174,12 +174,45 @@ def _json_metadata(source: str) -> tuple[list[str], list[str], list[str]]:
     return top_keys, list(dict.fromkeys(deps))[:160], scripts
 
 
+
+
+def _pyproject_environment_metadata(source: str) -> dict[str, Any]:
+    try:
+        data = tomllib.loads(source)
+    except (tomllib.TOMLDecodeError, ValueError):
+        return {}
+    out: dict[str, Any] = {}
+    project = data.get("project")
+    if isinstance(project, dict):
+        requires_python = project.get("requires-python")
+        if requires_python:
+            out["requires_python"] = str(requires_python)
+    tool = data.get("tool") if isinstance(data.get("tool"), dict) else {}
+    poetry = tool.get("poetry") if isinstance(tool, dict) else None
+    if isinstance(poetry, dict):
+        deps = poetry.get("dependencies")
+        if isinstance(deps, dict) and deps.get("python"):
+            out.setdefault("requires_python", str(deps.get("python")))
+        out["manager_hint"] = "poetry"
+    if isinstance(tool, dict) and "uv" in tool:
+        out["manager_hint"] = "uv"
+    return out
+
+
+def _python_version_file(source: str) -> str | None:
+    for raw in source.splitlines():
+        value = raw.strip()
+        if value and not value.startswith("#"):
+            return value[:80]
+    return None
+
 def build_structure_only_analysis(path: str, source: str, static_analysis: dict[str, Any]) -> dict[str, Any]:
     """LLMを呼ばず、依存/設定ファイルから引き継ぎに必要なメタ情報だけ作る。"""
     name = PurePosixPath(path).name
     lower = name.lower()
     deps: list[str] = []
     facts: list[str] = []
+    environment_metadata: dict[str, Any] = {}
 
     if re.fullmatch(r"requirements(?:[-_.][\w.-]+)?\.txt", lower):
         deps = _requirement_names(source)
@@ -188,6 +221,10 @@ def build_structure_only_analysis(path: str, source: str, static_analysis: dict[
         keys, deps = _toml_metadata(source)
         if keys:
             facts.append("トップレベルキー: " + ", ".join(keys[:20]))
+        if name == "pyproject.toml":
+            environment_metadata.update(_pyproject_environment_metadata(source))
+            if environment_metadata.get("requires_python"):
+                facts.append("Python要件: " + str(environment_metadata["requires_python"]))
     elif name in {"package.json", "package-lock.json", "tsconfig.json"}:
         keys, deps, scripts = _json_metadata(source)
         if keys:
@@ -196,7 +233,13 @@ def build_structure_only_analysis(path: str, source: str, static_analysis: dict[
             facts.append("scripts: " + ", ".join(scripts[:20]))
     elif name == ".env.example":
         keys = _env_keys(source)
+        environment_metadata["environment_variables"] = keys
         facts.append(f"環境変数キー {len(keys)} 件: " + ", ".join(keys[:40]))
+    elif name == ".python-version":
+        version = _python_version_file(source)
+        if version:
+            environment_metadata["python_version"] = version
+            facts.append(f"Pythonバージョン指定: {version}")
     elif name in {".gitignore", ".dockerignore"}:
         patterns = [line.strip() for line in source.splitlines() if line.strip() and not line.lstrip().startswith("#")]
         facts.append(f"除外パターン {len(patterns)} 件")
@@ -214,6 +257,7 @@ def build_structure_only_analysis(path: str, source: str, static_analysis: dict[
         "package-lock.json": "Node.js依存関係ロック",
         "tsconfig.json": "TypeScriptコンパイラ設定",
         ".env.example": "環境変数の設定例",
+        ".python-version": "Pythonバージョン指定",
         ".gitignore": "Git除外設定",
         ".dockerignore": "Dockerビルドコンテキスト除外設定",
         "Cargo.toml": "Rustパッケージ/依存設定",
@@ -236,6 +280,7 @@ def build_structure_only_analysis(path: str, source: str, static_analysis: dict[
         "change_risks": ["このファイルは構造のみ解析しており、値や設定の意味まではLLM解釈していません。"],
         "unknowns": ["個々の設定値の意図や運用上の意味は、この構造解析だけでは判断できません。"],
         "metadata_facts": facts,
+        "environment_metadata": environment_metadata,
     }
 
 
@@ -497,7 +542,7 @@ def sanitize_project_files(files: list[dict[str, Any]], project_index: dict[str,
     return sanitized, {
         "removed_claim_count": len(removed),
         "removed_claims": removed[:300],
-        "note": "個別LLM解析の関数・クラス・関連ファイル・外部依存を静的情報と実在pathで照合し、未確認の主張を除外しました。v3.4でもこのgrounding済み結果を最終UI/JSONに使用します。",
+        "note": "個別LLM解析の関数・クラス・関連ファイル・外部依存を静的情報と実在pathで照合し、未確認の主張を除外しました。v3.5でもこのgrounding済み結果を最終UI/JSONに使用します。",
     }
 
 

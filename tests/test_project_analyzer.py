@@ -198,3 +198,20 @@ def test_sanitize_project_files_preserves_metadata_and_adds_verified_facts():
     assert first["verified_facts"]["external_dependencies"] == ["requests"]
     assert first["verified_facts"]["related_files"] == ["config.py"]
     assert first["analysis"]["external_dependencies"] == ["requests"]
+
+
+def test_python_version_file_is_structure_only_and_extracted():
+    source = "3.12.4\n"
+    decision = classify_project_content(".python-version", source)
+    assert decision["mode"] == "structure"
+    static = analyze_source(".python-version", source)
+    analysis = build_structure_only_analysis(".python-version", source, static)
+    assert analysis["environment_metadata"]["python_version"] == "3.12.4"
+
+
+def test_pyproject_requires_python_is_extracted_for_environment_setup():
+    source = '[project]\nname="demo"\nrequires-python=">=3.11"\ndependencies=["fastapi>=0.100"]\n'
+    static = analyze_source("pyproject.toml", source)
+    analysis = build_structure_only_analysis("pyproject.toml", source, static)
+    assert analysis["environment_metadata"]["requires_python"] == ">=3.11"
+    assert "fastapi" in analysis["external_dependencies"]

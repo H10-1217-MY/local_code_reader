@@ -20,9 +20,11 @@ from .config import (
     MAX_CHAT_HISTORY_MESSAGES,
     MAX_FILE_BYTES,
     MAX_PROJECT_FILES,
+    MAX_ENVIRONMENT_FILES,
     MAX_QUESTION_CHARS,
     OLLAMA_MODEL,
 )
+from .environment_setup import build_environment_plan
 from .ollama_client import (
     analyze_project_with_ollama,
     analyze_with_ollama,
@@ -41,7 +43,7 @@ from .project_analyzer import (
 
 BASE_DIR = Path(__file__).resolve().parent
 
-app = FastAPI(title="Local Code Reader", version="0.3.4")
+app = FastAPI(title="Local Code Reader", version="0.3.5")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
@@ -71,6 +73,16 @@ class ProjectDocsRequest(BaseModel):
     analysis: dict[str, Any]
     files: list[dict[str, Any]] = Field(min_length=1, max_length=MAX_PROJECT_FILES)
 
+
+
+
+class EnvironmentPlanRequest(BaseModel):
+    project_name: str = Field(min_length=1, max_length=255)
+    target_os: Literal["ubuntu_debian", "rhel_rocky_fedora", "macos", "windows"]
+    shell: Literal["auto", "bash", "zsh", "powershell", "cmd"] = "auto"
+    python_version: str = Field(default="", max_length=80)
+    gpu: Literal["none", "nvidia", "amd", "apple", "unknown"] = "none"
+    files: list[dict[str, Any]] = Field(min_length=1, max_length=MAX_ENVIRONMENT_FILES)
 
 class ProjectAskRequest(BaseModel):
     project_name: str = Field(min_length=1, max_length=255)
@@ -134,7 +146,7 @@ def status():
         "ollama_connected": bool(models),
         "models": models,
         "default_model": OLLAMA_MODEL,
-        "limits": {"max_file_bytes": MAX_FILE_BYTES, "max_project_files": MAX_PROJECT_FILES},
+        "limits": {"max_file_bytes": MAX_FILE_BYTES, "max_project_files": MAX_PROJECT_FILES, "max_environment_files": MAX_ENVIRONMENT_FILES},
         "allowed_extensions": sorted(ALLOWED_EXTENSIONS),
         "allowed_filenames": sorted(ALLOWED_FILENAMES),
         "project_filter": {
@@ -230,10 +242,108 @@ async def analyze_project_file(request: Request, path: str = Query(..., min_leng
     return result
 
 
+@app.post("/api/project/environment/analyze-file")
+async def analyze_environment_file(request: Request, path: str = Query(..., min_length=1, max_length=600)):
+    """Environment Setup Mode用。ソースは受信中だけ扱い、Ollamaを呼ばず静的情報だけ返す。"""
+    safe_path = _validate_project_path(path)
+    content = await request.body()
+    if len(content) > MAX_FILE_BYTES:
+        raise HTTPException(status_code=413, detail=f"ファイルが大きすぎます。1ファイル上限は {MAX_FILE_BYTES // 1024} KiB です。")
+
+    filename = PurePosixPath(safe_path).name
+    if not content:
+        return {
+            "file": {"name": filename, "path": safe_path, "language": "Unknown", "line_count": 0, "char_count": 0},
+            "processing": {"mode": "skip", "reason": "空ファイル"},
+        }
+
+    source = _decode_source(content)
+    decision = classify_project_content(safe_path, source)
+    if decision["mode"] == "skip":
+        return {
+            "file": {
+                "name": filename,
+                "path": safe_path,
+                "language": analyze_source(safe_path, source)["language"],
+                "line_count": source.count("\n") + (1 if source else 0),
+                "char_count": len(source),
+            },
+            "processing": decision,
+        }
+
+    static_analysis = analyze_source(safe_path, source)
+    file_info = {
+        "name": filename,
+        "path": safe_path,
+        "language": static_analysis["language"],
+        "line_count": static_analysis["line_count"],
+        "char_count": static_analysis["char_count"],
+    }
+    if decision["mode"] == "structure":
+        analysis = build_structure_only_analysis(safe_path, source, static_analysis)
+        processing = decision
+    else:
+        analysis = {
+            "purpose": "Environment Setup Modeの静的スキャン（LLM解析なし）",
+            "overview": "import・環境変数・構造情報だけを環境構築計画に利用します。",
+            "main_flow": [],
+            "key_functions": [],
+            "key_classes": [],
+            "inputs": [],
+            "outputs": [],
+            "external_dependencies": static_analysis.get("detected_external_dependencies") or [],
+            "related_files": [],
+            "change_risks": [],
+            "unknowns": [],
+        }
+        processing = {"mode": "static", "reason": "環境構築モードのためOllamaを呼ばず静的解析のみ"}
+
+    return {
+        "file": file_info,
+        "processing": processing,
+        "static_analysis": static_analysis,
+        "analysis": analysis,
+        "model": None,
+        "metrics": {"total_duration_ns": 0, "prompt_eval_count": 0, "eval_count": 0},
+    }
+
+
+@app.post("/api/project/environment-plan")
+def environment_plan(payload: EnvironmentPlanRequest):
+    """静的スキャン済みデータとユーザー指定OSから、実行前確認用の環境構築計画を作る。"""
+    if len(payload.files) > MAX_ENVIRONMENT_FILES:
+        raise HTTPException(status_code=400, detail=f"Environment Setup Modeは最大 {MAX_ENVIRONMENT_FILES} ファイルまでです。")
+
+    compact_files: list[dict[str, Any]] = []
+    for item in payload.files:
+        file_info = item.get("file") or {}
+        path = str(file_info.get("path") or "")
+        if not path:
+            raise HTTPException(status_code=400, detail="環境構築用データにpathがありません。")
+        _validate_project_path(path)
+        compact_files.append({
+            "file": file_info,
+            "processing": item.get("processing") or {"mode": "static", "reason": ""},
+            "static_analysis": item.get("static_analysis") or {},
+            "analysis": item.get("analysis") or {},
+        })
+
+    verified_index = build_project_index(compact_files)
+    return build_environment_plan(
+        project_name=payload.project_name.strip(),
+        project_index=verified_index,
+        files=compact_files,
+        target_os=payload.target_os,
+        shell=payload.shell,
+        python_version=payload.python_version.strip(),
+        gpu=payload.gpu,
+    )
+
+
 @app.post("/api/project/summarize")
 def summarize_project(payload: ProjectSummaryRequest):
     if len(payload.files) > MAX_PROJECT_FILES:
-        raise HTTPException(status_code=400, detail=f"v3.4では最大 {MAX_PROJECT_FILES} ファイルまでです。")
+        raise HTTPException(status_code=400, detail=f"v3.5では最大 {MAX_PROJECT_FILES} ファイルまでです。")
 
     compact_files: list[dict[str, Any]] = []
     for item in payload.files:
@@ -272,7 +382,7 @@ def summarize_project(payload: ProjectSummaryRequest):
         "project_index": project_index,
         "model": llm_result.get("model"),
         "analysis": grounded_project_analysis,
-        # v3.4でも、最終出力/UI/JSONはgrounding済み個別解析を正とする。
+        # v3.5でも、最終出力/UI/JSONはgrounding済み個別解析を正とする。
         "files": grounded_files,
         "metrics": llm_result.get("metrics") or {},
         "grounding": {
@@ -286,7 +396,7 @@ def summarize_project(payload: ProjectSummaryRequest):
 @app.post("/api/project/generate-docs")
 def generate_project_docs(payload: ProjectDocsRequest):
     if len(payload.files) > MAX_PROJECT_FILES:
-        raise HTTPException(status_code=400, detail=f"v3.4では最大 {MAX_PROJECT_FILES} ファイルまでです。")
+        raise HTTPException(status_code=400, detail=f"v3.5では最大 {MAX_PROJECT_FILES} ファイルまでです。")
 
     compact_files: list[dict[str, Any]] = []
     for item in payload.files:
@@ -325,7 +435,7 @@ def generate_project_docs(payload: ProjectDocsRequest):
 @app.post("/api/project/ask")
 def ask_project(payload: ProjectAskRequest):
     if len(payload.files) > MAX_PROJECT_FILES:
-        raise HTTPException(status_code=400, detail=f"v3.4では最大 {MAX_PROJECT_FILES} ファイルまでです。")
+        raise HTTPException(status_code=400, detail=f"v3.5では最大 {MAX_PROJECT_FILES} ファイルまでです。")
 
     compact_files: list[dict[str, Any]] = []
     for item in payload.files:

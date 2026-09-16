@@ -1,6 +1,38 @@
-# Local Code Reader v3.4
+# Local Code Reader v3.5
 
 ローカルOllamaを使い、機密ソースコードを外部LLMへ送らずに読むためのコード理解・引き継ぎ支援ツールです。
+
+
+v3.5では、既存プロジェクトを静的に読み取り、ユーザーが指定したOS向けに環境構築手順を作る **Environment Setup Mode** を追加しました。環境構築モードではOllamaを呼ばず、requirements / pyproject / lock / import / 環境変数名などの確認済み情報を使います。コマンドは提案だけで、自動実行しません。
+
+## v3.5: Environment Setup Mode
+
+```text
+プロジェクトフォルダ + 対象OS
+   ↓
+静的解析のみ（Ollamaなし）
+   ↓
+依存定義 / import / Pythonバージョン / 環境変数名を抽出
+   ↓
+依存定義ファイルを優先して構築方式を決定
+   ↓
+OS別コマンド + 再現性チェック
+   ↓
+SETUP.md / .env.example.generated / requirements.candidates.txt
+```
+
+- 対象OS: Ubuntu/Debian、RHEL/Rocky/Fedora、macOS、Windows
+- shell: auto / bash / zsh / PowerShell / cmd
+- Pythonバージョンは任意入力。`.python-version` / `pyproject.toml` からのヒントも取得
+- `uv.lock` / `poetry.lock` / `Pipfile.lock` / `requirements.txt` / `pyproject.toml` を優先順位付きで利用
+- importだけで見つかった依存は、配布パッケージ名と一致する保証がないため「候補」として分離
+- 依存定義が無い場合は `requirements.candidates.txt` を全行コメントで生成し、自動インストール対象にはしない
+- 環境変数参照を確認した場合は、値を入れず `.env.example.generated` を生成
+- GPUを指定してもCUDA/ROCm/ドライバは自動確定・自動導入しない
+- 生成したコマンドは一切自動実行しない
+- LLMを使わない軽量スキャンなので、通常のプロジェクト要約より多い最大200ファイルまで扱う（既定値）
+
+Environment Setup Modeは、通常のプロジェクト解析とは別タブです。環境再現に必要な事実だけを見るため、LLM個別解析やプロジェクト要約の待ち時間なしで使えます。
 
 
 v3.4では、grounding済みのプロジェクト解析結果から **README.md / ARCHITECTURE.md / HANDOVER.md** を自動生成する引き継ぎ資料機能を追加しました。資料生成時に元ソースコード本文は再送せず、追加のOllama呼び出しも行いません。静的解析を文書の骨格にし、既存のgrounding済みAI解釈を補助的に利用します。
@@ -293,7 +325,7 @@ HTMLから次のローカル参照候補を取得します。
 ## セットアップ
 
 ```bash
-cd local_code_reader_v3_4
+cd local_code_reader_v3_5
 ./setup.sh
 ./run.sh
 ```
@@ -332,13 +364,16 @@ JSON保存にも元ソースコードは含みません。
 
 ただし、OS・ブラウザ・プロキシ・Ollamaの設定やログなど別レイヤーまで含めた痕跡ゼロを保証するものではありません。機密用途では `127.0.0.1` のまま外部公開せず運用してください。
 
-## v3.4時点の制限
+## v3.5時点の制限
 
 - PythonはASTで詳細解析しますが、JavaScript/TypeScript/CSS/HTML等は依然として軽量解析です。
 - JavaScriptのclass methodや動的importなど、すべての構文を完全には追跡しません。
 - import/reference依存はbest-effortで、DI・設定経由・動的ロードは追跡しません。
 - 自由文の意味解釈そのものはLLMが担当するため、固有名詞以外の誤解釈が完全になくなるわけではありません。
 - プロジェクトQ&Aは解析済み情報だけを使うため、元ソースにしかない細かな式・条件分岐までは断定できません。必要なら1ファイルQ&Aで掘り下げます。
+- Environment Setup ModeのOSコマンドは代表例です。プロジェクト固有のapt/dnf/brewパッケージまでは自動確定しません。
+- import名とPyPIパッケージ名は一致しない場合があるため、依存定義がないプロジェクトでは候補だけを提示します。
+- CUDA / ROCm / GPUドライバはバージョン不整合の影響が大きいため自動導入しません。
 
 ## テスト
 
@@ -346,4 +381,4 @@ JSON保存にも元ソースコードは含みません。
 python -m pytest -q
 ```
 
-v3.4では、これらに加えて引き継ぎ資料3種の生成、静的APIルート・環境変数名の資料反映、元ソース本文を資料へ混入させないこと、存在しないpathを再groundingして除外することをテストします。
+v3.5では、これらに加えてEnvironment Setup Modeの依存戦略、import由来候補の分離、`.python-version` / `pyproject.toml` のPython要件抽出、元ソース本文をSETUP資料へ混入させないことをテストします。

@@ -8,6 +8,8 @@ let lastProjectResult = null;
 let lastProjectDocs = null;
 let projectChatHistory = [];
 let appStatus = null;
+let setupFiles = [];
+let lastSetupResult = null;
 
 const byId = (id) => document.getElementById(id);
 const EXCLUDED_DIRS = new Set([".git", ".venv", "venv", "env", "node_modules", "__pycache__", "build", "dist", ".idea", ".vscode", ".mypy_cache", ".pytest_cache", ".ruff_cache"]);
@@ -80,7 +82,7 @@ function renderSingleResult(data) {
   byId("purpose").textContent = data.analysis.purpose || ""; byId("overview").textContent = data.analysis.overview || ""; fillList("mainFlow", data.analysis.main_flow, {stripLeadingNumber: true}); fillList("changeRisks", data.analysis.change_risks);
   renderInterpretedSymbols("keyFunctions", data.analysis.key_functions, data.static_analysis.functions); renderInterpretedSymbols("keyClasses", data.analysis.key_classes, data.static_analysis.classes);
   fillList("inputs", data.analysis.inputs); fillList("outputs", data.analysis.outputs); fillList("unknowns", data.analysis.unknowns);
-  byId("staticJson").textContent = JSON.stringify(data.static_analysis, null, 2); byId("singleResultArea").classList.remove("hidden"); byId("projectResultArea").classList.add("hidden");
+  byId("staticJson").textContent = JSON.stringify(data.static_analysis, null, 2); byId("singleResultArea").classList.remove("hidden"); byId("projectResultArea").classList.add("hidden"); byId("setupResultArea").classList.add("hidden");
 }
 
 function appendChatMessage(role, text, model = "") {
@@ -128,14 +130,26 @@ function appendProjectChatMessage(role, text, model = "", details = null) {
 async function fileToBase64(file) { const bytes = new Uint8Array(await file.arrayBuffer()); let binary = ""; const chunk = 0x8000; for (let i=0;i<bytes.length;i+=chunk) binary += String.fromCharCode(...bytes.subarray(i, i+chunk)); return btoa(binary); }
 
 function switchMode(mode) {
-  const project = mode === "project"; byId("singleMode").classList.toggle("hidden", project); byId("projectMode").classList.toggle("hidden", !project); byId("singleTab").classList.toggle("active", !project); byId("projectTab").classList.toggle("active", project); clearError(); clearLoading();
+  const single = mode === "single";
+  const project = mode === "project";
+  const setup = mode === "setup";
+  byId("singleMode").classList.toggle("hidden", !single);
+  byId("projectMode").classList.toggle("hidden", !project);
+  byId("setupMode").classList.toggle("hidden", !setup);
+  byId("singleTab").classList.toggle("active", single);
+  byId("projectTab").classList.toggle("active", project);
+  byId("setupTab").classList.toggle("active", setup);
+  byId("modelField").classList.toggle("hidden", setup);
+  clearError(); clearLoading();
 }
-byId("singleTab").addEventListener("click", () => switchMode("single")); byId("projectTab").addEventListener("click", () => switchMode("project"));
+byId("singleTab").addEventListener("click", () => switchMode("single"));
+byId("projectTab").addEventListener("click", () => switchMode("project"));
+byId("setupTab").addEventListener("click", () => switchMode("setup"));
 
 async function loadStatus() {
   try {
     const res = await fetch("/api/status"); const data = await res.json(); appStatus = data;
-    const status = byId("status"); status.textContent = data.ollama_connected ? `Ollama接続済み / ${data.models.length} models` : "Ollama未接続"; status.className = `status ${data.ollama_connected ? "ok" : "ng"}`;
+    const status = byId("status"); status.textContent = data.ollama_connected ? `Ollama接続済み / ${data.models.length} models` : "Ollama未接続 / 環境構築は利用可"; status.className = `status ${data.ollama_connected ? "ok" : "ng"}`;
     const list = byId("modelsList"); list.innerHTML = ""; data.models.forEach(model => { const option = document.createElement("option"); option.value = typeof model === "string" ? model : (model.name || model.model); list.appendChild(option); });
   } catch { byId("status").textContent = "状態確認失敗"; byId("status").className = "status ng"; }
 }
@@ -206,6 +220,107 @@ function renderFolderPreview() {
 
 byId("folderInput").addEventListener("change", renderFolderPreview);
 
+function classifiedSetupFiles() {
+  return Array.from(byId("setupFolderInput").files).map(file => {
+    const base = classifyProjectFile(file);
+    if (base.mode === "llm") return {file, mode:"static", reason:"環境構築モードではOllamaを呼ばず静的解析"};
+    return {file, ...base};
+  });
+}
+function renderSetupFolderPreview() {
+  const all = Array.from(byId("setupFolderInput").files); const preview = byId("setupFolderPreview"); preview.innerHTML = "";
+  if (!all.length) { preview.textContent = "フォルダ未選択"; return; }
+  const classified = classifiedSetupFiles(); const counts = {static:0, structure:0, skip:0, exclude:0};
+  classified.forEach(item => counts[item.mode] = (counts[item.mode] || 0) + 1);
+  const processable = classified.filter(item => item.mode === "static" || item.mode === "structure");
+  const totalBytes = processable.reduce((sum, item) => sum + item.file.size, 0); const maxFiles = appStatus?.limits?.max_environment_files || 200;
+  const title = document.createElement("strong"); title.textContent = `${projectNameFromFiles(all)} / ${all.length} files 選択`;
+  const badges = document.createElement("div"); badges.className = "filter-counts";
+  [["静的解析",counts.static,"llm"],["依存/設定",counts.structure,"structure"],["スキップ",counts.skip,"skip"],["除外",counts.exclude,"exclude"]].forEach(([label,count,type]) => {
+    const chip=document.createElement("span"); chip.className=`filter-chip ${type}`; chip.textContent=`${label} ${count}`; badges.appendChild(chip);
+  });
+  const meta=document.createElement("span"); meta.className="preview-meta"; meta.textContent=`環境スキャン対象 ${processable.length} files / ${(totalBytes/1024).toFixed(1)} KiB / 上限 ${maxFiles} / Ollamaなし`;
+  preview.append(title,badges,meta);
+}
+byId("setupFolderInput").addEventListener("change", renderSetupFolderPreview);
+
+function renderSetupResult(data) {
+  lastSetupResult = data;
+  byId("setupTitle").textContent = `${data.project?.name || "project"} / Environment Setup`;
+  byId("setupMeta").textContent = `${data.project?.file_count || 0} files / ${data.target?.os_label || data.target?.os || "OS不明"} / shell: ${data.target?.shell || "auto"} / Ollama call: ${data.generation?.extra_ollama_call ? "yes" : "no"}`;
+
+  const targetFacts = byId("setupTargetFacts"); targetFacts.innerHTML = "";
+  [["OS", data.target?.os_label || data.target?.os], ["Shell", data.target?.shell], ["Python指定", data.target?.python_version || "未指定"], ["GPU", data.target?.gpu || "none"], ["依存戦略", data.dependency_plan?.kind || "不明"]].forEach(([label,value]) => {
+    const dt=document.createElement("dt"); dt.textContent=label; const dd=document.createElement("dd"); dd.textContent=String(value || "-"); targetFacts.append(dt,dd);
+  });
+
+  fillList("setupDependencyFiles", data.detected?.dependency_files || []);
+  fillList("setupDeclaredDependencies", (data.detected?.declared_dependencies || []).map(x => `${x.name}  ← ${x.source}`));
+  fillList("setupImportCandidates", data.dependency_plan?.import_only_candidates || []);
+  fillList("setupEnvironmentVariables", (data.detected?.environment_variables || []).map(x => `${x.name}  ← ${x.source}`));
+
+  const commands = byId("setupCommands"); commands.innerHTML = "";
+  if (!data.commands?.length) commands.textContent = "安全に自動生成できるコマンドはありませんでした。";
+  (data.commands || []).forEach((row,index) => {
+    const box=document.createElement("div"); box.className="setup-command";
+    const head=document.createElement("div"); head.className="symbol-head";
+    const strong=document.createElement("strong"); strong.textContent=`${index+1}. ${row.title}`; head.append(strong, createBadge(row.confidence || "unknown", row.confidence === "high" ? "fact" : "warning"));
+    const pre=document.createElement("pre"); pre.textContent=row.command || ""; box.append(head,pre);
+    if (row.note) { const p=document.createElement("p"); p.className="muted mini"; p.textContent=row.note; box.appendChild(p); }
+    commands.appendChild(box);
+  });
+
+  const findings = byId("setupFindings"); findings.innerHTML = "";
+  (data.reproducibility_findings || []).forEach(row => {
+    const box=document.createElement("div"); box.className=`setup-finding ${row.status || "info"}`;
+    const strong=document.createElement("strong"); strong.textContent=row.title || row.status; const p=document.createElement("p"); p.className="muted mini"; p.textContent=row.detail || ""; box.append(strong,p); findings.appendChild(box);
+  });
+  if (!data.reproducibility_findings?.length) findings.textContent = "特記事項なし";
+
+  const generated = byId("setupGeneratedFiles"); generated.innerHTML = "";
+  (data.generated_files || []).forEach((doc,index) => {
+    const details=document.createElement("details"); details.className="file-card project-doc-card"; if (index===0) details.open=true;
+    const summary=document.createElement("summary"); const title=document.createElement("strong"); title.textContent=doc.filename; const desc=document.createElement("span"); desc.textContent=doc.description || ""; summary.append(title,desc);
+    const body=document.createElement("div"); body.className="file-card-body"; const actions=document.createElement("div"); actions.className="doc-actions";
+    const save=document.createElement("button"); save.type="button"; save.className="secondary compact"; save.textContent=`${doc.filename} 保存`; save.addEventListener("click",()=>downloadText(doc.content,doc.filename,"text/plain;charset=utf-8")); actions.appendChild(save);
+    const pre=document.createElement("pre"); pre.className="doc-preview"; pre.textContent=doc.content || ""; body.append(actions,pre); details.append(summary,body); generated.appendChild(details);
+  });
+
+  byId("setupJson").textContent = JSON.stringify(data,null,2);
+  byId("setupResultArea").classList.remove("hidden");
+  byId("singleResultArea").classList.add("hidden");
+  byId("projectResultArea").classList.add("hidden");
+  byId("setupResultArea").scrollIntoView({behavior:"smooth", block:"start"});
+}
+
+byId("setupForm").addEventListener("submit", async (event) => {
+  event.preventDefault(); clearError();
+  const classified = classifiedSetupFiles();
+  const files = classified.filter(item => item.mode === "static" || item.mode === "structure");
+  if (!files.length) { showError("環境構築用に静的解析できるファイルがありません。"); return; }
+  const maxFiles = appStatus?.limits?.max_environment_files || 200;
+  if (files.length > maxFiles) { showError(`環境スキャン対象が ${files.length} 件あります。Environment Setup Modeの上限 ${maxFiles} 件以内で試してください。`); return; }
+  byId("setupAnalyzeButton").disabled = true; setupFiles = [];
+  const projectName = projectNameFromFiles(Array.from(byId("setupFolderInput").files));
+  try {
+    for (let i=0;i<files.length;i++) {
+      const item=files[i]; const file=item.file; const path=normalizedRelativePath(file);
+      setLoading(`Environment Setup ${i+1}/${files.length}: ${path}\n静的解析のみ（Ollama呼び出しなし）`);
+      const params=new URLSearchParams({path});
+      const res=await fetch(`/api/project/environment/analyze-file?${params}`, {method:"POST",headers:{"Content-Type":"application/octet-stream"},body:file});
+      const data=await res.json(); if(!res.ok) throw new Error(`${path}: ${data.detail || "静的解析に失敗しました"}`);
+      if (data.processing?.mode !== "skip") setupFiles.push(data);
+    }
+    if (!setupFiles.length) throw new Error("環境構築計画に利用できるファイルがありませんでした。");
+    setLoading("静的解析結果と対象OSから環境構築プランを作成しています…");
+    const payload={project_name:projectName,target_os:byId("targetOs").value,shell:byId("targetShell").value,python_version:byId("targetPythonVersion").value.trim(),gpu:byId("targetGpu").value,files:setupFiles};
+    const res=await fetch("/api/project/environment-plan", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+    const data=await res.json(); if(!res.ok) throw new Error(data.detail || "環境構築プラン生成に失敗しました");
+    renderSetupResult(data);
+  } catch(error) { showError(error.message); }
+  finally { byId("setupAnalyzeButton").disabled=false; clearLoading(); renderSetupFolderPreview(); }
+});
+
 function renderProjectPairList(id, items, keyName, valueName) {
   const el = byId(id); el.innerHTML = ""; if (!items?.length) { el.textContent = "特記事項なし"; return; }
   items.forEach(item => { const box = document.createElement("div"); box.className = "symbol"; const strong = document.createElement("strong"); strong.textContent = item[keyName] || "不明"; const p = document.createElement("p"); p.className = "symbol-meta"; p.textContent = item[valueName] || ""; box.append(strong, p); el.appendChild(box); });
@@ -224,7 +339,7 @@ function renderProjectResult(summary, fileResults, skippedFiles = [], excludedFi
   fillList("configDataFiles", a.config_and_data_files); fillList("projectDependencies", idx.external_dependencies); fillList("projectRisks", a.change_risks); fillList("projectUnknowns", a.unknowns);
   renderProjectPairList("projectComponents", a.components, "path", "role");
   const cards = byId("projectFileCards"); cards.innerHTML = ""; verifiedFiles.forEach(item => { const card=document.createElement("details");card.className="file-card";const summaryEl=document.createElement("summary");const title=document.createElement("strong");title.textContent=item.file.path;const desc=document.createElement("span");desc.textContent=item.analysis.purpose || "";summaryEl.append(title,desc);const body=document.createElement("div");body.className="file-card-body";const overview=document.createElement("p");overview.textContent=item.analysis.overview || "";const meta=document.createElement("p");meta.className="muted mini";const mode=item.processing?.mode || "llm";const removed=item.grounding?.removed_claim_count || 0;meta.textContent=`${item.file.language} / ${item.file.line_count} lines / ${mode === "structure" ? "構造のみ・LLMなし" : `model: ${item.model || summary.model}`} / grounding除外 ${removed}`;const facts=document.createElement("p");facts.className="muted mini";const deps=item.verified_facts?.external_dependencies || item.analysis.external_dependencies || [];const related=item.verified_facts?.related_files || item.analysis.related_files || [];facts.textContent=`確認済み外部依存: ${deps.length ? deps.join(", ") : "なし"} / 関連ファイル: ${related.length ? related.join(", ") : "なし"}`;body.append(meta,overview,facts);card.append(summaryEl,body);cards.appendChild(card); });
-  byId("projectJson").textContent = JSON.stringify(lastProjectResult, null, 2); byId("projectResultArea").classList.remove("hidden"); byId("singleResultArea").classList.add("hidden");
+  byId("projectJson").textContent = JSON.stringify(lastProjectResult, null, 2); byId("projectResultArea").classList.remove("hidden"); byId("singleResultArea").classList.add("hidden"); byId("setupResultArea").classList.add("hidden");
 }
 
 byId("projectForm").addEventListener("submit", async (event) => {
@@ -233,7 +348,7 @@ byId("projectForm").addEventListener("submit", async (event) => {
   projectSkipped = classified.filter(item => item.mode === "skip").map(item => ({path:normalizedRelativePath(item.file), reason:item.reason}));
   projectExcluded = classified.filter(item => item.mode === "exclude").map(item => ({path:normalizedRelativePath(item.file), reason:item.reason}));
   if (!files.length) { showError("LLM解析または構造解析の対象になるファイルがありません。"); return; }
-  const maxFiles = appStatus?.limits?.max_project_files || 40; if (files.length > maxFiles) { showError(`解析対象が ${files.length} 件あります。v3.4の上限 ${maxFiles} 件以内のフォルダで試してください。`); return; }
+  const maxFiles = appStatus?.limits?.max_project_files || 40; if (files.length > maxFiles) { showError(`解析対象が ${files.length} 件あります。v3.5の上限 ${maxFiles} 件以内のフォルダで試してください。`); return; }
   byId("projectAnalyzeButton").disabled = true; projectFiles = []; const projectName = projectNameFromFiles(Array.from(byId("folderInput").files)); const model = byId("modelInput").value.trim();
   try {
     for (let i=0;i<files.length;i++) {
@@ -347,5 +462,6 @@ function downloadJson(data, filename) { if (!data) return; const blob = new Blob
 byId("projectDocsButton").addEventListener("click", generateProjectDocs);
 byId("regenerateProjectDocsButton").addEventListener("click", generateProjectDocs);
 byId("projectDownloadButton").addEventListener("click", () => downloadJson(lastProjectResult, `${lastProjectResult?.project?.name || "project"}.project-analysis.json`));
+byId("setupDownloadButton").addEventListener("click", () => downloadJson(lastSetupResult, `${lastSetupResult?.project?.name || "project"}.environment-plan.json`));
 
 loadStatus();

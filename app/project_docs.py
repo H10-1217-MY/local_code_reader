@@ -197,7 +197,7 @@ def _language_lines(project_index: dict[str, Any]) -> list[str]:
 
 def _project_note() -> str:
     return (
-        "> この文書は Local Code Reader v3.4 がプロジェクト解析結果から生成しました。"
+        "> この文書は Local Code Reader v3.5 がプロジェクト解析結果から生成しました。"
         "ファイル名・言語・関数/クラス・依存関係・APIルート・環境変数名などは静的解析を優先し、"
         "目的・概要・変更リスクなどには解析時のAI解釈が含まれます。元ソースコード本文は文書へ埋め込みません。"
     )
@@ -390,7 +390,7 @@ def generate_project_documents(
         "project": {"name": project_name, "file_count": len(project_index.get("paths") or [])},
         "documents": docs,
         "generation": {
-            "version": "3.4",
+            "version": "3.5",
             "source": "grounded_project_analysis",
             "document_count": len(docs),
             "source_code_embedded": False,

@@ -7,6 +7,7 @@ REQUEST_TIMEOUT_SECONDS = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "300"))
 MAX_QUESTION_CHARS = int(os.getenv("MAX_QUESTION_CHARS", "3000"))
 MAX_CHAT_HISTORY_MESSAGES = int(os.getenv("MAX_CHAT_HISTORY_MESSAGES", "8"))
 MAX_PROJECT_FILES = int(os.getenv("MAX_PROJECT_FILES", "40"))
+MAX_ENVIRONMENT_FILES = int(os.getenv("MAX_ENVIRONMENT_FILES", "200"))
 
 ALLOWED_EXTENSIONS = {
     ".py", ".pyw",
@@ -22,7 +23,7 @@ ALLOWED_EXTENSIONS = {
 ALLOWED_FILENAMES = {
     "Dockerfile", "Makefile", "CMakeLists.txt", "Procfile",
     ".gitignore", ".dockerignore", ".env.example",
-    "Pipfile", "Pipfile.lock", "poetry.lock", "uv.lock",
+    "Pipfile", "Pipfile.lock", "poetry.lock", "uv.lock", ".python-version",
     "yarn.lock", "pnpm-lock.yaml", "Cargo.lock", "go.mod", "go.sum",
 }
 
@@ -33,7 +34,7 @@ PROJECT_STRUCTURE_ONLY_FILENAMES = {
     "pyproject.toml", "Pipfile", "Pipfile.lock", "poetry.lock", "uv.lock",
     "package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
     "Cargo.toml", "Cargo.lock", "go.mod", "go.sum",
-    ".gitignore", ".dockerignore", ".env.example", "tsconfig.json",
+    ".gitignore", ".dockerignore", ".env.example", ".python-version", "tsconfig.json",
 }
 
 # 選択されても解析価値が低い、または生成物として扱う代表例。
